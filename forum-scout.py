@@ -373,6 +373,20 @@ _SEED_TERMS = [
 
 
 # ─── CSS ──────────────────────────────────────────────────────────────────────
+# ─── Data models ──────────────────────────────────────────────────────────────
+class ResultItem(GObject.Object):
+    __gtype_name__ = "ResultItem"
+
+    def __init__(self, marker, forum, color, title, link, date):
+        super().__init__()
+        self.marker = marker   # "★" when the URL is bookmarked, else ""
+        self.forum  = forum    # display name (may carry the via-DDG suffix)
+        self.color  = color
+        self.title  = title
+        self.link   = link
+        self.date   = date
+
+
 # ─── Main window ──────────────────────────────────────────────────────────────
 class ScoutWindow(Gtk.ApplicationWindow):
 
@@ -401,7 +415,11 @@ class ScoutWindow(Gtk.ApplicationWindow):
         self.set_child(root)
 
         root.append(self._build_topbar())
-        # notebook (Steps 3–4) and statusbar (Step 6) appended in later steps
+
+        notebook = self._build_notebook()
+        notebook.set_vexpand(True)
+        root.append(notebook)
+        # statusbar (Step 6) appended in a later step
 
         # apply initial forums-bar visibility (settings load in Step 6)
         self._forums_bar.set_visible(self._forums_bar_visible)
@@ -540,9 +558,7 @@ class ScoutWindow(Gtk.ApplicationWindow):
 
         self._res_tab_label = Gtk.Label(label=S["tab_results"])
         self._notebook.append_page(self._build_results_tab(), self._res_tab_label)
-        self._notebook.append_page(self._build_bm_tab(),      Gtk.Label(label=S["tab_bm"]))
-        self._notebook.append_page(self._build_hist_tab(),    Gtk.Label(label=S["tab_hist"]))
-        self._notebook.append_page(self._build_about_tab(),  Gtk.Label(label=S["tab_about"]))
+        # bookmarks + history tabs: Step 4; about tab: Step 7
 
         return self._notebook
 
@@ -550,49 +566,72 @@ class ScoutWindow(Gtk.ApplicationWindow):
     def _build_results_tab(self):
         sw = Gtk.ScrolledWindow()
         sw.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        sw.set_vexpand(True)
 
-        # columns: idx(str) | forum_display(str) | forum_color(str) | title(str) | link(str) | date(str)
-        # idx is "★" when the URL is already bookmarked, otherwise a sequence number
-        self._res_store = Gtk.ListStore(str, str, str, str, str, str)
-        tv = Gtk.TreeView(model=self._res_store)
-        tv.connect("row-activated",      self._on_result_activate)
-        tv.connect("button-press-event", self._on_result_rclick)
-        tv.connect("popup-menu",         self._on_result_popup_menu)
-        tv.connect("motion-notify-event", self._on_result_hover)
-        tv.connect("leave-notify-event",  self._on_result_hover_leave)
-        tv.get_selection().set_mode(Gtk.SelectionMode.MULTIPLE)
-        self._res_view = tv
+        self._res_store = Gio.ListStore(item_type=ResultItem)
 
-        def _col(title, col_idx, expand=False, fixed_w=None, weight=None):
-            r = Gtk.CellRendererText()
-            r.set_property("ellipsize", Pango.EllipsizeMode.END)
-            if weight:
-                r.set_property("weight", weight)
-            kw = {"text": col_idx, "foreground": 2} if col_idx == 1 else {"text": col_idx}
-            c = Gtk.TreeViewColumn(title, r, **kw)
+        cv = Gtk.ColumnView()
+        cv.connect("activate", self._on_result_activate)
+        self._res_view = cv
+
+        # One label-per-cell factory; optionally colored (forum) or bold (title)
+        def _factory(attr, colored=False, bold=False):
+            factory = Gtk.SignalListItemFactory()
+
+            def on_setup(_f, list_item):
+                lbl = Gtk.Label(xalign=0)
+                lbl.set_ellipsize(Pango.EllipsizeMode.END)
+                list_item.set_child(lbl)
+
+            def on_bind(_f, list_item):
+                obj  = list_item.get_item()
+                lbl  = list_item.get_child()
+                text = getattr(obj, attr)
+                if colored:
+                    lbl.set_markup(
+                        f'<span foreground="{obj.color}">'
+                        f'{GLib.markup_escape_text(text)}</span>'
+                    )
+                elif bold:
+                    lbl.set_markup(
+                        f'<span weight="600">{GLib.markup_escape_text(text)}</span>'
+                    )
+                else:
+                    lbl.set_label(text)
+
+            factory.connect("setup", on_setup)
+            factory.connect("bind",  on_bind)
+            return factory
+
+        def _column(title, factory, fixed_w=None, expand=False, sorter=None):
+            col = Gtk.ColumnViewColumn(title=title, factory=factory)
             if expand:
-                c.set_expand(True)
-                c.set_sizing(Gtk.TreeViewColumnSizing.AUTOSIZE)
-            elif fixed_w:
-                c.set_sizing(Gtk.TreeViewColumnSizing.FIXED)
-                c.set_fixed_width(fixed_w)
-            tv.append_column(c)
-            return c
+                col.set_expand(True)
+            if fixed_w:
+                col.set_fixed_width(fixed_w)
+            if sorter:
+                col.set_sorter(sorter)
+            cv.append_column(col)
+            return col
 
-        self._col_res_n     = _col(S["col_n"],     0, fixed_w=28)
-        self._col_res_forum = _col(S["col_forum"], 1, fixed_w=150)   # foreground=col 2
-        _col(S["col_title"], 3, expand=True, weight=Pango.Weight.SEMIBOLD)
-        self._col_res_date  = _col(S["col_date"],  5, fixed_w=100)
-        # link (col 4) kept in store for double-click/right-click, not shown
+        forum_sorter = Gtk.CustomSorter.new(self._cmp_forum)
+        date_sorter  = Gtk.CustomSorter.new(self._cmp_date)
 
-        # Sortable columns — click header to toggle sort
-        self._col_res_forum.set_sort_column_id(1)
-        self._col_res_date.set_sort_column_id(5)
-        self._res_store.set_sort_func(1, self._sort_forum)
-        self._res_store.set_sort_func(5, self._sort_date)
-        self._res_store.set_sort_column_id(5, Gtk.SortType.DESCENDING)  # default: newest first
+        self._col_res_n     = _column(S["col_n"],     _factory("marker"),              fixed_w=28)
+        self._col_res_forum = _column(S["col_forum"], _factory("forum", colored=True), fixed_w=150,
+                                      sorter=forum_sorter)
+        _column(S["col_title"], _factory("title", bold=True), expand=True)
+        self._col_res_date  = _column(S["col_date"],  _factory("date"),                fixed_w=100,
+                                      sorter=date_sorter)
 
-        sw.add(tv)
+        # Sorting only applies when the data flows through a SortListModel driven
+        # by the ColumnView's own (header-click) sorter.
+        sort_model = Gtk.SortListModel(model=self._res_store, sorter=cv.get_sorter())
+        self._res_selection = Gtk.MultiSelection(model=sort_model)
+        cv.set_model(self._res_selection)
+        cv.sort_by_column(self._col_res_date, Gtk.SortType.DESCENDING)  # default: newest first
+
+        sw.set_child(cv)
         return sw
 
     # ── Bookmarks tab ─────────────────────────────────────────────────────────
@@ -767,6 +806,8 @@ class ScoutWindow(Gtk.ApplicationWindow):
         return box
 
     def _set_status(self, msg: str):
+        if not hasattr(self, "_statusbar"):
+            return  # statusbar built in Step 6
         self._statusbar.pop(self._ctx)
         self._statusbar.push(self._ctx, msg)
 
@@ -783,12 +824,13 @@ class ScoutWindow(Gtk.ApplicationWindow):
             self._set_status(S["no_results"])
             return
 
-        self._undo_btn.hide()
+        if hasattr(self, "_undo_btn"):
+            self._undo_btn.set_visible(False)   # statusbar built in Step 6
         self._bm_undo_data = []
         self._busy = True
         self._btn.set_sensitive(False)
         self._spinner.start()
-        self._res_store.clear()
+        self._res_store.remove_all()
         self._results       = []
         self._search_total  = len(active)
         self._search_done   = 0
@@ -830,7 +872,7 @@ class ScoutWindow(Gtk.ApplicationWindow):
             self._search_idx += 1
             display = forum + (S["via_ddg"] if via_ddg else "")
             marker  = "★" if link in self._bm_urls else ""
-            self._res_store.append([marker, display, color, title, link, date])
+            self._res_store.append(ResultItem(marker, display, color, title, link, date))
             self._results.append((self._search_idx, forum, color, title, link, date, via_ddg))
 
         if ddg_empty_name:
@@ -865,18 +907,14 @@ class ScoutWindow(Gtk.ApplicationWindow):
 
     # ── Sort helpers ──────────────────────────────────────────────────────────
     @staticmethod
-    def _sort_forum(model, iter_a, iter_b, _data):
-        a = model.get_value(iter_a, 1)
-        b = model.get_value(iter_b, 1)
-        return (a > b) - (a < b)
+    def _cmp_forum(a, b, _data):
+        return (a.forum > b.forum) - (a.forum < b.forum)
 
     @staticmethod
-    def _sort_date(model, iter_a, iter_b, _data):
-        a = model.get_value(iter_a, 5)
-        b = model.get_value(iter_b, 5)
-        a = "0000-00-00" if a in ("—", "") else a
-        b = "0000-00-00" if b in ("—", "") else b
-        return (a > b) - (a < b)
+    def _cmp_date(a, b, _data):
+        da = "0000-00-00" if a.date in ("—", "") else a.date
+        db = "0000-00-00" if b.date in ("—", "") else b.date
+        return (da > db) - (da < db)
 
     @staticmethod
     def _sort_bm_forum(model, iter_a, iter_b, _data):
@@ -891,9 +929,10 @@ class ScoutWindow(Gtk.ApplicationWindow):
         return (a > b) - (a < b)
 
     # ── Result interactions ───────────────────────────────────────────────────
-    def _on_result_activate(self, _view, path, _col):
-        it = self._res_store.get_iter(path)
-        self._open_url(self._res_store.get_value(it, 4))
+    def _on_result_activate(self, _cv, position):
+        item = self._res_selection.get_item(position)
+        if item is not None:
+            self._open_url(item.link)
 
     def _on_result_rclick(self, view, event):
         if event.button != 3:
@@ -1197,8 +1236,10 @@ class ScoutWindow(Gtk.ApplicationWindow):
         ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with open(HISTORY_FILE, "a") as f:
             f.write(f"{ts} - {query}\n")
-        self._hist_store.prepend([ts, query])
-        self._completion_add(query)   # make it available for next search
+        if hasattr(self, "_hist_store"):
+            self._hist_store.prepend([ts, query])   # history tab built in Step 4
+        if hasattr(self, "_completion_store"):
+            self._completion_add(query)             # completion built in Step 5
 
     def _load_history(self):
         self._hist_store.clear()
