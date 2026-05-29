@@ -1469,6 +1469,7 @@ class ScoutWindow(Gtk.ApplicationWindow):
         else:
             nxt = max(0, min(n - 1, cur + delta))
         self._completion_selection.set_selected(nxt)
+        self._completion_list.scroll_to(nxt, Gtk.ListScrollFlags.NONE, None)
 
     def _accept_completion(self, term: str):
         self._completion_popover.popdown()
