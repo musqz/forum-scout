@@ -392,48 +392,63 @@ class ScoutWindow(Gtk.ApplicationWindow):
         self._bm_bulk_confirm    = True
         self._bm_undo_data       = []
 
+        self._build_ui()
         self.present()
 
     # ── UI ────────────────────────────────────────────────────────────────────
     def _build_ui(self):
-        pass
+        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        self.set_child(root)
+
+        root.append(self._build_topbar())
+        # notebook (Steps 3–4) and statusbar (Step 6) appended in later steps
+
+        # apply initial forums-bar visibility (settings load in Step 6)
+        self._forums_bar.set_visible(self._forums_bar_visible)
+        self._forums_toggle.set_label(
+            "Forums ▾" if self._forums_bar_visible else "Forums ▸"
+        )
 
     # ── Top bar ───────────────────────────────────────────────────────────────
     def _build_topbar(self):
         bar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        bar.set_margin_start(6)
+        bar.set_margin_end(6)
+        bar.set_margin_top(6)
 
         # Row 1 — search entry + button + spinner
         row1 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        bar.pack_start(row1, False, False, 0)
+        bar.append(row1)
 
         self._entry = Gtk.Entry()
         self._entry.set_placeholder_text(S["search_ph"])
+        self._entry.set_hexpand(True)
         self._entry.connect("activate", self._on_search)
         self._entry.connect("changed",  self._on_entry_changed)
-        self._entry.set_completion(self._build_completion())
-        row1.pack_start(self._entry, True, True, 0)
+        # live suggestions / completion wired in Step 5 (_build_completion)
+        row1.append(self._entry)
 
         self._btn = Gtk.Button(label=S["search_btn"])
         self._btn.connect("clicked", self._on_search)
-        row1.pack_start(self._btn, False, False, 0)
+        row1.append(self._btn)
 
         self._spinner = Gtk.Spinner()
-        row1.pack_start(self._spinner, False, False, 0)
+        row1.append(self._spinner)
 
         self._forums_toggle = Gtk.Button(label="Forums ▾")
         self._forums_toggle.set_tooltip_text("Show/hide forums bar (Ctrl+F)")
         self._forums_toggle.connect("clicked", self._toggle_forums_bar)
-        row1.pack_start(self._forums_toggle, False, False, 0)
+        row1.append(self._forums_toggle)
 
         help_btn = Gtk.Button(label="?")
         help_btn.set_tooltip_text("Keyboard shortcuts")
         help_btn.connect("clicked", self._show_shortcuts)
-        row1.pack_start(help_btn, False, False, 0)
+        row1.append(help_btn)
         self._help_btn = help_btn
 
-        # Forums bar — rows 2 and 3, toggled as a unit
+        # Forums bar — rows 2–4, toggled as a unit
         self._forums_bar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        bar.pack_start(self._forums_bar, False, False, 0)
+        bar.append(self._forums_bar)
 
         # Row 2 — distro forums (FlowBox wraps to next line if too many)
         row2 = Gtk.FlowBox()
@@ -441,15 +456,15 @@ class ScoutWindow(Gtk.ApplicationWindow):
         row2.set_row_spacing(4)
         row2.set_column_spacing(8)
         row2.set_max_children_per_line(50)
-        self._forums_bar.pack_start(row2, False, False, 0)
+        self._forums_bar.append(row2)
 
         # Row 3 — wikis
         row3 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        self._forums_bar.pack_start(row3, False, False, 0)
+        self._forums_bar.append(row3)
 
         # Row 4 — DE/WM forums + hits spinner
         row4 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        self._forums_bar.pack_start(row4, False, False, 0)
+        self._forums_bar.append(row4)
 
         self._checks: dict[str, Gtk.CheckButton] = {}
         for f in FORUMS:
@@ -457,24 +472,26 @@ class ScoutWindow(Gtk.ApplicationWindow):
             cb.set_active(f["on"])
             lbl = Gtk.Label()
             lbl.set_markup(f'<span foreground="{f["color"]}" weight="bold">{f["name"]}</span>')
-            cb.add(lbl)
+            cb.set_child(lbl)
             self._checks[f["name"]] = cb
             if f["group"] == "distro":
-                row2.add(cb)
+                row2.append(cb)
             elif f["group"] == "wiki":
-                row3.pack_start(cb, False, False, 0)
+                row3.append(cb)
             else:  # de
-                row4.pack_start(cb, False, False, 0)
+                row4.append(cb)
 
-        row4.pack_start(Gtk.Label(), True, True, 0)  # spacer
+        spacer = Gtk.Label()
+        spacer.set_hexpand(True)
+        row4.append(spacer)
 
         hits_label = Gtk.Label(label=S["hits_label"])
-        hits_label.get_style_context().add_class("dim-label")
-        row4.pack_start(hits_label, False, False, 0)
+        hits_label.add_css_class("dim-label")
+        row4.append(hits_label)
 
         adj = Gtk.Adjustment(value=DEFAULT_HITS, lower=1, upper=50, step_increment=1, page_increment=5)
         self._hits_spin = Gtk.SpinButton(adjustment=adj, climb_rate=1, digits=0)
-        row4.pack_start(self._hits_spin, False, False, 0)
+        row4.append(self._hits_spin)
 
         return bar
 
@@ -484,9 +501,14 @@ class ScoutWindow(Gtk.ApplicationWindow):
         self._forums_toggle.set_label("Forums ▾" if self._forums_bar_visible else "Forums ▸")
 
     def _show_shortcuts(self, btn):
-        pop = Gtk.Popover.new(btn)
+        pop = Gtk.Popover()
+        pop.set_parent(btn)
+        pop.connect("closed", lambda p: p.unparent())
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        box.set_border_width(12)
+        box.set_margin_start(12)
+        box.set_margin_end(12)
+        box.set_margin_top(12)
+        box.set_margin_bottom(12)
         grid = Gtk.Grid(column_spacing=20, row_spacing=4)
         grid.set_halign(Gtk.Align.CENTER)
         for row, (key, desc) in enumerate((
@@ -508,9 +530,8 @@ class ScoutWindow(Gtk.ApplicationWindow):
             k.set_halign(Gtk.Align.END)
             grid.attach(k,                    0, row, 1, 1)
             grid.attach(Gtk.Label(label=desc), 1, row, 1, 1)
-        box.pack_start(grid, False, False, 0)
-        pop.add(box)
-        box.show_all()
+        box.append(grid)
+        pop.set_child(box)
         pop.popup()
 
     # ── Notebook ──────────────────────────────────────────────────────────────
@@ -754,6 +775,8 @@ class ScoutWindow(Gtk.ApplicationWindow):
         query = self._entry.get_text().strip()
         if not query or self._busy:
             return
+        if not hasattr(self, "_res_store"):
+            return  # results tab not built yet (Step 3)
 
         active = [f for f in FORUMS if self._checks[f["name"]].get_active()]
         if not active:
@@ -1292,6 +1315,8 @@ class ScoutWindow(Gtk.ApplicationWindow):
     # ── Live suggestions ──────────────────────────────────────────────────────
     def _on_entry_changed(self, entry):
         """Debounce: schedule live suggestion fetch 400ms after last keystroke."""
+        if not hasattr(self, "_completion_store"):
+            return  # live suggestions not built yet (Step 5)
         text = entry.get_text().strip()
 
         # Cancel any pending timer
