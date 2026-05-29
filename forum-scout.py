@@ -1099,15 +1099,7 @@ class ScoutWindow(Gtk.ApplicationWindow):
         self._unbookmark_results_multi(self._selected_items(self._res_selection))
 
     def _open_results_multi(self, items):
-        links = [it.link for it in items if it.link]
-        if not links:
-            return
-        if len(links) > 15:
-            self._confirm(f"Open {len(links)} tabs in your browser?", "Open",
-                          lambda: [self._open_url(u) for u in links])
-            return
-        for url in links:
-            self._open_url(url)
+        self._open_url_list([it.link for it in items if it.link])
 
     def _bookmark_results_multi(self, items):
         bm_urls = self._bookmarked_urls()
@@ -1235,15 +1227,8 @@ class ScoutWindow(Gtk.ApplicationWindow):
         dlg.choose(self, None, on_choice)
 
     def _bm_open(self, *_):
-        links = [it.link for it in self._selected_items(self._bm_selection) if it.link]
-        if not links:
-            return
-        if len(links) > 15:
-            self._confirm(f"Open {len(links)} tabs in your browser?", "Open",
-                          lambda: [self._open_url(u) for u in links])
-            return
-        for url in links:
-            self._open_url(url)
+        self._open_url_list(
+            [it.link for it in self._selected_items(self._bm_selection) if it.link])
 
     def _bm_copy(self, *_):
         links = [it.link for it in self._selected_items(self._bm_selection) if it.link]
@@ -1768,6 +1753,17 @@ class ScoutWindow(Gtk.ApplicationWindow):
         subprocess.Popen(["xdg-open", url],
                          stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL)
+
+    def _open_url_list(self, links: list):
+        """Open a list of URLs, asking for confirmation when there are many."""
+        if not links:
+            return
+        if len(links) > 15:
+            self._confirm(f"Open {len(links)} tabs in your browser?", "Open",
+                          lambda: [self._open_url(u) for u in links])
+            return
+        for url in links:
+            self._open_url(url)
 
     @staticmethod
     def _copy(text: str):
