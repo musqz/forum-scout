@@ -1666,8 +1666,11 @@ class ScoutWindow(Gtk.ApplicationWindow):
         view.grab_focus()
         sel = sels[page]
         if sel.get_n_items() > 0:
-            sel.select_item(0, True)
-            view.scroll_to(0, None, Gtk.ListScrollFlags.NONE, None)
+            # FOCUS + SELECT set both the keyboard-focus item and the selection
+            # to 0 in one call — without FOCUS, the internal cursor stays at its
+            # old position so arrow-down jumps several rows instead of one.
+            view.scroll_to(0, None,
+                           Gtk.ListScrollFlags.FOCUS | Gtk.ListScrollFlags.SELECT, None)
 
     # ── Settings persist ──────────────────────────────────────────────────────
     def _load_settings(self):
