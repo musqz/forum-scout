@@ -436,8 +436,27 @@ class ScoutWindow(Gtk.ApplicationWindow):
             "Forums ▾" if self._forums_bar_visible else "Forums ▸"
         )
         self._setup_controllers()
+        self._apply_focus_css()
         self.connect("close-request", self._on_close)
         self.present()
+
+    # ── Focus indicator ───────────────────────────────────────────────────────
+    @staticmethod
+    def _apply_focus_css():
+        # Many GTK4 themes (especially GTK3 ports) don't render a visible focus
+        # indicator on ColumnView rows. This minimal rule adds a subtle outline
+        # on the focused row so keyboard navigation is usable on any theme.
+        provider = Gtk.CssProvider()
+        provider.load_from_data(b"""
+            columnview > listview > row:focus {
+                outline: 2px solid alpha(currentColor, 0.55);
+                outline-offset: -2px;
+            }
+        """)
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(), provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+        )
 
     # ── UI ────────────────────────────────────────────────────────────────────
     def _build_ui(self):
