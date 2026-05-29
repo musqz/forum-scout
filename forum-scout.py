@@ -1569,8 +1569,9 @@ class ScoutWindow(Gtk.ApplicationWindow):
         self._completion_filter.changed(Gtk.FilterChange.DIFFERENT)
         if new_live and self._entry_has_focus() and not self._busy:
             self._popup_completion()
-            # select the first item so focus lands on the newest suggestion
+            # select and scroll to item 0 so the newest suggestion is at the top
             self._completion_selection.set_selected(0)
+            self._completion_list.scroll_to(0, Gtk.ListScrollFlags.NONE, None)
         else:
             self._update_completion_popover()
 
@@ -1660,10 +1661,12 @@ class ScoutWindow(Gtk.ApplicationWindow):
         sels  = [self._res_selection, self._bm_selection, self._hist_selection]
         if page >= len(views):
             return
-        views[page].grab_focus()
+        view = views[page]
+        view.grab_focus()
         sel = sels[page]
-        if sel.get_selection().get_size() == 0 and sel.get_n_items() > 0:
+        if sel.get_n_items() > 0:
             sel.select_item(0, True)
+            view.scroll_to(0, None, Gtk.ListScrollFlags.NONE, None)
 
     # ── Settings persist ──────────────────────────────────────────────────────
     def _load_settings(self):
