@@ -209,7 +209,7 @@ class _ForumUnreachable(Exception):
 _NET_ERRORS = (requests.ConnectionError, requests.Timeout, requests.exceptions.SSLError)
 
 
-def _fetch_discourse(forum: dict, query: str, hits: int) -> list[tuple[str, str, str]]:
+def _fetch_discourse(forum: dict, query: str, hits: int) -> list[tuple[str, str, str, bool]]:
     url = f"{forum['url']}/search.json"
     try:
         r = _session.get(url, params={"q": query}, timeout=9)
@@ -217,9 +217,10 @@ def _fetch_discourse(forum: dict, query: str, hits: int) -> list[tuple[str, str,
         out = []
         base = forum["url"]
         for t in data.get("topics", [])[:hits]:
-            link = f"{base}/t/{t['slug']}/{t['id']}"
-            date = _fmt_date(t.get("created_at", ""))
-            out.append((t["title"], link, date))
+            link   = f"{base}/t/{t['slug']}/{t['id']}"
+            date   = _fmt_date(t.get("created_at", ""))
+            solved = bool(t.get("has_accepted_answer", False))
+            out.append((t["title"], link, date, solved))
         return out
     except _NET_ERRORS:
         raise _ForumUnreachable
@@ -227,7 +228,7 @@ def _fetch_discourse(forum: dict, query: str, hits: int) -> list[tuple[str, str,
         return []
 
 
-def _fetch_mediawiki(forum: dict, query: str, hits: int) -> list[tuple[str, str, str]]:
+def _fetch_mediawiki(forum: dict, query: str, hits: int) -> list[tuple[str, str, str, bool]]:
     try:
         r = _session.get(
             f"{forum['url']}/api.php",
@@ -247,7 +248,7 @@ def _fetch_mediawiki(forum: dict, query: str, hits: int) -> list[tuple[str, str,
         for item in data.get("query", {}).get("search", []):
             slug = urllib.parse.quote(item["title"].replace(" ", "_"))
             date = _fmt_date(item.get("timestamp", ""))
-            out.append((item["title"], f"{base}/{page_tpl.format(slug=slug)}", date))
+            out.append((item["title"], f"{base}/{page_tpl.format(slug=slug)}", date, False))
         return out
     except _NET_ERRORS:
         raise _ForumUnreachable
@@ -255,7 +256,7 @@ def _fetch_mediawiki(forum: dict, query: str, hits: int) -> list[tuple[str, str,
         return []
 
 
-def _fetch_ddg(forum: dict, query: str, hits: int) -> list[tuple[str, str, str]]:
+def _fetch_ddg(forum: dict, query: str, hits: int) -> list[tuple[str, str, str, bool]]:
     site = forum["url"]
     try:
         r = requests.get(
@@ -269,7 +270,7 @@ def _fetch_ddg(forum: dict, query: str, hits: int) -> list[tuple[str, str, str]]
         out = []
         for title, link in parser.results:
             if site in link:
-                out.append((title, link, "—"))   # DDG returns no date
+                out.append((title, link, "—", False))   # DDG returns no date
                 if len(out) >= hits:
                     break
         return out
@@ -378,8 +379,9 @@ class ResultItem(GObject.Object):
 
     # reactive so the ★ cell updates live when (un)bookmarked
     marker = GObject.Property(type=str, default="")
+    solved = GObject.Property(type=str, default="")
 
-    def __init__(self, marker, forum, color, title, link, date):
+    def __init__(self, marker, forum, color, title, link, date, solved=""):
         super().__init__()
         self.marker = marker   # "★" when the URL is bookmarked, else ""
         self.forum  = forum    # display name (may carry the via-DDG suffix)
@@ -387,18 +389,20 @@ class ResultItem(GObject.Object):
         self.title  = title
         self.link   = link
         self.date   = date
+        self.solved = solved
 
 
 class BookmarkItem(GObject.Object):
     __gtype_name__ = "BookmarkItem"
 
-    def __init__(self, forum, title, link, date, color):
+    def __init__(self, forum, title, link, date, color, solved=""):
         super().__init__()
-        self.forum = forum
-        self.title = title
-        self.link  = link
-        self.date  = date
-        self.color = color
+        self.forum  = forum
+        self.title  = title
+        self.link   = link
+        self.date   = date
+        self.color  = color
+        self.solved = solved
 
 
 class HistoryItem(GObject.Object):
@@ -668,6 +672,31 @@ class ScoutWindow(Gtk.ApplicationWindow):
         factory.connect("unbind",  on_unbind)
         return factory
 
+    @staticmethod
+    def _make_solved_factory():
+        factory = Gtk.SignalListItemFactory()
+
+        def on_setup(_f, list_item):
+            lbl = Gtk.Label(xalign=0.5)
+            list_item.set_child(lbl)
+
+        def on_bind(_f, list_item):
+            obj = list_item.get_item()
+            if obj.solved:
+                list_item.get_child().set_markup(
+                    f'<span foreground="#4caf50">{obj.solved}</span>'
+                )
+            else:
+                list_item.get_child().set_label("")
+
+        def on_unbind(_f, list_item):
+            pass
+
+        factory.connect("setup",  on_setup)
+        factory.connect("bind",   on_bind)
+        factory.connect("unbind", on_unbind)
+        return factory
+
     # ── Results tab ───────────────────────────────────────────────────────────
     def _build_results_tab(self):
         sw = Gtk.ScrolledWindow()
@@ -702,6 +731,7 @@ class ScoutWindow(Gtk.ApplicationWindow):
         _column(S["col_title"], _factory("title", bold=True), expand=True)
         self._col_res_date  = _column(S["col_date"],  _factory("date"),                fixed_w=100,
                                       sorter=date_sorter)
+        _column("✓", self._make_solved_factory(), fixed_w=22)
 
         # Sorting only applies when the data flows through a SortListModel driven
         # by the ColumnView's own (header-click) sorter.
@@ -774,6 +804,10 @@ class ScoutWindow(Gtk.ApplicationWindow):
         self._col_bm_date.set_fixed_width(145)
         self._col_bm_date.set_sorter(date_sorter)
         cv.append_column(self._col_bm_date)
+
+        solved_col = Gtk.ColumnViewColumn(title="✓", factory=self._make_solved_factory())
+        solved_col.set_fixed_width(22)
+        cv.append_column(solved_col)
 
         sort_model = Gtk.SortListModel(model=filtered, sorter=cv.get_sorter())
         self._bm_selection = Gtk.MultiSelection(model=sort_model)
@@ -950,19 +984,20 @@ class ScoutWindow(Gtk.ApplicationWindow):
             unreachable = forum["name"]
         via_ddg = forum["type"] == "ddg"
         results = [
-            (forum["name"], forum["color"], title, link, date, via_ddg)
-            for title, link, date in items
+            (forum["name"], forum["color"], title, link, date, via_ddg, solved)
+            for title, link, date, solved in items
         ]
         ddg_empty = forum["name"] if via_ddg and not items and not unreachable else None
         GLib.idle_add(self._add_forum_results, results, ddg_empty, unreachable)
 
     def _add_forum_results(self, new_results: list, ddg_empty_name, unreachable_name):
-        for forum, color, title, link, date, via_ddg in new_results:
+        for forum, color, title, link, date, via_ddg, solved in new_results:
             self._search_idx += 1
-            display = forum + (S["via_ddg"] if via_ddg else "")
-            marker  = "★" if link in self._bm_urls else ""
-            self._res_store.append(ResultItem(marker, display, color, title, link, date))
-            self._results.append((self._search_idx, forum, color, title, link, date, via_ddg))
+            display       = forum + (S["via_ddg"] if via_ddg else "")
+            marker        = "★" if link in self._bm_urls else ""
+            solved_marker = "✓" if solved else ""
+            self._res_store.append(ResultItem(marker, display, color, title, link, date, solved_marker))
+            self._results.append((self._search_idx, forum, color, title, link, date, via_ddg, solved))
 
         if ddg_empty_name:
             self._ddg_empty.append(ddg_empty_name)
@@ -1107,7 +1142,7 @@ class ScoutWindow(Gtk.ApplicationWindow):
         for it in items:
             if not it.link or it.link in bm_urls:
                 continue
-            self._add_bookmark(it.forum, it.title, it.link)
+            self._add_bookmark(it.forum, it.title, it.link, it.solved)
             bm_urls.add(it.link)
             added += 1
         if added:
@@ -1125,12 +1160,12 @@ class ScoutWindow(Gtk.ApplicationWindow):
         self._set_status(f"{len(to_remove)} bookmark(s) removed.")
 
     # ── Bookmarks ─────────────────────────────────────────────────────────────
-    def _add_bookmark(self, forum: str, title: str, link: str):
+    def _add_bookmark(self, forum: str, title: str, link: str, solved: str = ""):
         date  = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
         color = _FORUM_COLOR.get(forum, "#cdd6f4")
         with open(BOOKMARK_FILE, "a") as f:
-            f.write(f"[{forum}] {title} - {link}|||{date}\n")
-        self._bm_data.append([forum, title, link, date, color])
+            f.write(f"[{forum}] {title} - {link}|||{date}|||{solved}\n")
+        self._bm_data.append([forum, title, link, date, color, solved])
         self._bm_refresh()
         self._mark_result_bookmarked(link)
         self._set_status(S["bm_added"].format(title))
@@ -1156,8 +1191,8 @@ class ScoutWindow(Gtk.ApplicationWindow):
         # rebuild the master store from _bm_data; the text filter is applied by
         # the FilterListModel layer, not here
         self._bm_store.remove_all()
-        for forum, title, link, date, color in self._bm_data:
-            self._bm_store.append(BookmarkItem(forum, title, link, date, color))
+        for forum, title, link, date, color, solved in self._bm_data:
+            self._bm_store.append(BookmarkItem(forum, title, link, date, color, solved))
 
     def _bm_filter_fn(self, item, _user_data=None):
         text = self._bm_filter_entry.get_text().strip().lower()
@@ -1183,25 +1218,25 @@ class ScoutWindow(Gtk.ApplicationWindow):
                 try:
                     forum = line.split("]")[0].lstrip("[")
                     rest  = line.split("] ", 1)[1]
-                    if "|||" in rest:
-                        body, date = rest.rsplit("|||", 1)
-                    else:
-                        body, date = rest, ""
+                    parts = rest.split("|||")
+                    body  = parts[0]
+                    date  = parts[1] if len(parts) > 1 else ""
+                    solved = parts[2] if len(parts) > 2 else ""
                     cut = body.rfind(" - http")
                     if cut == -1:
                         cut = body.rfind(" - ")
                     title = body[:cut]
                     link  = body[cut + 3:]
                     color = _FORUM_COLOR.get(forum, "#cdd6f4")
-                    self._bm_data.append([forum, title, link, date, color])
+                    self._bm_data.append([forum, title, link, date, color, solved])
                 except Exception:
                     pass
         self._bm_refresh()
 
     def _write_bookmarks(self):
         with open(BOOKMARK_FILE, "w") as fh:
-            for f, t, l, d, _ in self._bm_data:
-                fh.write(f"[{f}] {t} - {l}|||{d}\n")
+            for f, t, l, d, _, s in self._bm_data:
+                fh.write(f"[{f}] {t} - {l}|||{d}|||{s}\n")
 
     @staticmethod
     def _selected_items(selection):
