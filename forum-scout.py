@@ -377,6 +377,9 @@ _SEED_TERMS = [
 class ResultItem(GObject.Object):
     __gtype_name__ = "ResultItem"
 
+    # reactive so the ★ cell updates live when (un)bookmarked
+    marker = GObject.Property(type=str, default="")
+
     def __init__(self, marker, forum, color, title, link, date):
         super().__init__()
         self.marker = marker   # "★" when the URL is bookmarked, else ""
@@ -428,6 +431,7 @@ class ScoutWindow(Gtk.ApplicationWindow):
         self._bm_undo_data       = []
 
         self._build_ui()
+        self._setup_controllers()
         self.present()
 
     # ── UI ────────────────────────────────────────────────────────────────────
@@ -587,9 +591,10 @@ class ScoutWindow(Gtk.ApplicationWindow):
 
     # ── ColumnView helpers ──────────────────────────────────────────────────────
     @staticmethod
-    def _make_label_factory(attr, colored=False, bold=False):
+    def _make_label_factory(attr, colored=False, bold=False, bind=False):
         """Label-per-cell factory; reads `attr` off the row item, optionally
-        coloring it with the item's `color` and/or bolding it."""
+        coloring it with the item's `color` and/or bolding it. With bind=True,
+        `attr` must be a GObject property and the cell tracks it live."""
         factory = Gtk.SignalListItemFactory()
 
         def on_setup(_f, list_item):
@@ -600,7 +605,11 @@ class ScoutWindow(Gtk.ApplicationWindow):
         def on_bind(_f, list_item):
             obj  = list_item.get_item()
             lbl  = list_item.get_child()
-            esc  = GLib.markup_escape_text(getattr(obj, attr))
+            if bind:
+                list_item._binding = obj.bind_property(
+                    attr, lbl, "label", GObject.BindingFlags.SYNC_CREATE)
+                return
+            esc = GLib.markup_escape_text(getattr(obj, attr))
             if colored and bold:
                 lbl.set_markup(f'<span foreground="{obj.color}" weight="600">{esc}</span>')
             elif colored:
@@ -610,8 +619,16 @@ class ScoutWindow(Gtk.ApplicationWindow):
             else:
                 lbl.set_label(getattr(obj, attr))
 
+        def on_unbind(_f, list_item):
+            b = getattr(list_item, "_binding", None)
+            if b is not None:
+                b.unbind()
+                list_item._binding = None
+
         factory.connect("setup", on_setup)
         factory.connect("bind",  on_bind)
+        if bind:
+            factory.connect("unbind", on_unbind)
         return factory
 
     # ── Results tab ───────────────────────────────────────────────────────────
@@ -642,7 +659,7 @@ class ScoutWindow(Gtk.ApplicationWindow):
         forum_sorter = Gtk.CustomSorter.new(self._cmp_forum)
         date_sorter  = Gtk.CustomSorter.new(self._cmp_date)
 
-        self._col_res_n     = _column(S["col_n"],     _factory("marker"),              fixed_w=28)
+        self._col_res_n     = _column(S["col_n"],     _factory("marker", bind=True),   fixed_w=28)
         self._col_res_forum = _column(S["col_forum"], _factory("forum", colored=True), fixed_w=150,
                                       sorter=forum_sorter)
         _column(S["col_title"], _factory("title", bold=True), expand=True)
@@ -958,130 +975,117 @@ class ScoutWindow(Gtk.ApplicationWindow):
         if item is not None:
             self._open_url(item.link)
 
-    def _on_result_rclick(self, view, event):
-        if event.button != 3:
-            return False
-        info = view.get_path_at_pos(int(event.x), int(event.y))
-        if not info:
-            return False
-        path = info[0]
-        sel  = view.get_selection()
-        if not sel.path_is_selected(path):
-            sel.unselect_all()
-            sel.select_path(path)
-        self._show_result_menu(event=event)
-        return True
+    # ── Controllers (keyboard + mouse) ─────────────────────────────────────────
+    def _setup_controllers(self):
+        # Window-level keyboard shortcuts (capture so global shortcuts win)
+        keys = Gtk.EventControllerKey()
+        keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        keys.connect("key-pressed", self._on_key_press)
+        self.add_controller(keys)
 
-    def _on_result_popup_menu(self, view):
-        path, _ = view.get_cursor()
-        if path is None:
-            return False
-        sel = view.get_selection()
-        if not sel.path_is_selected(path):
-            sel.unselect_all()
-            sel.select_path(path)
-        self._show_result_menu(event=None)
-        return True
+        # Right-click context menu on results
+        rclick = Gtk.GestureClick(button=3)
+        rclick.connect("pressed", self._on_result_rclick)
+        self._res_view.add_controller(rclick)
 
-    def _show_result_menu(self, event):
-        sel = self._res_view.get_selection()
-        model, paths = sel.get_selected_rows()
-        if not paths:
+        self._res_menu = Gtk.PopoverMenu()
+        self._res_menu.set_parent(self._res_view)
+        self._res_menu.set_has_arrow(False)
+
+        for name, cb in [
+            ("res-open",       self._act_res_open),
+            ("res-copy",       self._act_res_copy),
+            ("res-bookmark",   self._act_res_bookmark),
+            ("res-unbookmark", self._act_res_unbookmark),
+        ]:
+            action = Gio.SimpleAction.new(name, None)
+            action.connect("activate", cb)
+            self.add_action(action)
+
+        # Delete / Return on the bookmarks list
+        bm_keys = Gtk.EventControllerKey()
+        bm_keys.connect("key-pressed", self._on_bm_key)
+        self._bm_view.add_controller(bm_keys)
+
+        # NOTE: hover URL preview intentionally omitted (forum column is enough)
+
+    def _on_result_rclick(self, _gesture, _n_press, x, y):
+        items = self._selected_items(self._res_selection)
+        if not items:
             return
-        n = len(paths)
-        menu = Gtk.Menu()
-
-        if n == 1:
-            it    = model.get_iter(paths[0])
-            forum = model.get_value(it, 1)
-            title = model.get_value(it, 3)
-            link  = model.get_value(it, 4)
-            already_bm = link in {r[2] for r in self._bm_data}
-            actions = [
-                (S["ctx_open"], lambda *_: self._open_url(link)),
-                (S["ctx_copy"], lambda *_: self._copy(link)),
-            ]
-            if already_bm:
-                actions.append((S["ctx_bm_remove"], lambda *_: self._bm_remove_by_link(link)))
+        menu = Gio.Menu()
+        if len(items) == 1:
+            it = items[0]
+            menu.append(S["ctx_open"], "win.res-open")
+            menu.append(S["ctx_copy"], "win.res-copy")
+            if it.link in self._bookmarked_urls():
+                menu.append(S["ctx_bm_remove"], "win.res-unbookmark")
             else:
-                actions.append((S["ctx_bm"], lambda *_: self._add_bookmark(forum, title, link)))
+                menu.append(S["ctx_bm"], "win.res-bookmark")
         else:
-            bm_urls   = self._bookmarked_urls()
-            links     = [model.get_value(model.get_iter(p), 4) for p in paths]
-            to_add    = [p for p, l in zip(paths, links) if l not in bm_urls]
-            to_remove = [p for p, l in zip(paths, links) if l in bm_urls]
-            actions = [(f"Open {n} in browser", lambda *_: self._open_results_multi(paths))]
-            if to_add:
-                actions.append((f"Add {len(to_add)} to bookmarks",
-                                 lambda *_, r=to_add: self._bookmark_results_multi(r)))
-            if to_remove:
-                actions.append((f"Remove {len(to_remove)} bookmark(s)",
-                                 lambda *_, r=to_remove: self._unbookmark_results_multi(r)))
+            n       = len(items)
+            bm_urls = self._bookmarked_urls()
+            n_add   = sum(1 for it in items if it.link and it.link not in bm_urls)
+            n_rem   = sum(1 for it in items if it.link in bm_urls)
+            menu.append(f"Open {n} in browser", "win.res-open")
+            if n_add:
+                menu.append(f"Add {n_add} to bookmarks", "win.res-bookmark")
+            if n_rem:
+                menu.append(f"Remove {n_rem} bookmark(s)", "win.res-unbookmark")
 
-        for label, cb in actions:
-            item = Gtk.MenuItem(label=label)
-            item.connect("activate", cb)
-            menu.append(item)
-        menu.show_all()
-        if event:
-            menu.popup_at_pointer(event)
-        else:
-            path, col = self._res_view.get_cursor()
-            rect = self._res_view.get_cell_area(path, col)
-            menu.popup_at_rect(
-                self._res_view.get_window(), rect,
-                Gdk.Gravity.SOUTH_WEST, Gdk.Gravity.NORTH_WEST, None
-            )
+        self._res_menu.set_menu_model(menu)
+        rect = Gdk.Rectangle()
+        rect.x, rect.y, rect.width, rect.height = int(x), int(y), 1, 1
+        self._res_menu.set_pointing_to(rect)
+        self._res_menu.popup()
 
-    def _open_results_multi(self, paths):
-        links = [self._res_store.get_value(self._res_store.get_iter(p), 4) for p in paths]
-        links = [l for l in links if l]
+    # context-menu actions operate on the current results selection
+    def _act_res_open(self, *_):
+        self._open_results_multi(self._selected_items(self._res_selection))
+
+    def _act_res_copy(self, *_):
+        links = [it.link for it in self._selected_items(self._res_selection) if it.link]
+        if links:
+            self._copy("\n".join(links))
+
+    def _act_res_bookmark(self, *_):
+        self._bookmark_results_multi(self._selected_items(self._res_selection))
+
+    def _act_res_unbookmark(self, *_):
+        self._unbookmark_results_multi(self._selected_items(self._res_selection))
+
+    def _open_results_multi(self, items):
+        links = [it.link for it in items if it.link]
         if not links:
             return
         if len(links) > 15:
-            dlg = Gtk.MessageDialog(
-                transient_for=self, flags=0,
-                message_type=Gtk.MessageType.QUESTION,
-                buttons=Gtk.ButtonsType.OK_CANCEL,
-                text=f"Open {len(links)} tabs in your browser?",
-            )
-            dlg.set_default_response(Gtk.ResponseType.CANCEL)
-            response = dlg.run()
-            dlg.destroy()
-            if response != Gtk.ResponseType.OK:
-                return
+            self._confirm(f"Open {len(links)} tabs in your browser?", "Open",
+                          lambda: [self._open_url(u) for u in links])
+            return
         for url in links:
             self._open_url(url)
 
-    def _bookmark_results_multi(self, paths):
+    def _bookmark_results_multi(self, items):
         bm_urls = self._bookmarked_urls()
         added = 0
-        for p in paths:
-            it    = self._res_store.get_iter(p)
-            link  = self._res_store.get_value(it, 4)
-            if not link or link in bm_urls:
+        for it in items:
+            if not it.link or it.link in bm_urls:
                 continue
-            forum = self._res_store.get_value(it, 1)
-            title = self._res_store.get_value(it, 3)
-            self._add_bookmark(forum, title, link)
-            bm_urls.add(link)
+            self._add_bookmark(it.forum, it.title, it.link)
+            bm_urls.add(it.link)
             added += 1
         if added:
             self._set_status(f"{added} bookmark(s) added.")
 
-    def _unbookmark_results_multi(self, paths):
-        links = {self._res_store.get_value(self._res_store.get_iter(p), 4) for p in paths}
-        links.discard("")
-        to_remove = self._bookmarked_urls() & links
+    def _unbookmark_results_multi(self, items):
+        to_remove = self._bookmarked_urls() & {it.link for it in items if it.link}
         if not to_remove:
             return
         self._bm_data = [bm for bm in self._bm_data if bm[2] not in to_remove]
         self._bm_refresh()
         for link in to_remove:
             self._mark_result_unbookmarked(link)
-        with open(BOOKMARK_FILE, "w") as fh:
-            for f, t, l, d, _ in self._bm_data:
-                fh.write(f"[{f}] {t} - {l}|||{d}\n")
+        self._write_bookmarks()
         self._set_status(f"{len(to_remove)} bookmark(s) removed.")
 
     # ── Bookmarks ─────────────────────────────────────────────────────────────
@@ -1102,11 +1106,12 @@ class ScoutWindow(Gtk.ApplicationWindow):
         self._set_result_marker(link, "")
 
     def _set_result_marker(self, link: str, marker: str):
+        # marker is a GObject property bound into the cell, so assigning it
+        # updates the ★ column live (no items_changed / re-sort needed)
         for i in range(self._res_store.get_n_items()):
             item = self._res_store.get_item(i)
-            if item.link == link and item.marker != marker:
+            if item.link == link:
                 item.marker = marker
-                self._res_store.items_changed(i, 1, 1)  # force the cell to rebind
 
     def _bookmarked_urls(self) -> set:
         return {row[2] for row in self._bm_data}
@@ -1275,6 +1280,16 @@ class ScoutWindow(Gtk.ApplicationWindow):
         item = self._bm_selection.get_item(position)
         if item is not None:
             self._open_url(item.link)
+
+    def _on_bm_key(self, _controller, keyval, _keycode, _state):
+        if keyval == Gdk.KEY_Delete:
+            self._bm_remove()
+            return True
+        if keyval == Gdk.KEY_Return:
+            if len(self._selected_items(self._bm_selection)) > 1:
+                self._bm_open()
+                return True
+        return False
 
     # ── History ───────────────────────────────────────────────────────────────
     def _log_history(self, query: str):
@@ -1479,28 +1494,10 @@ class ScoutWindow(Gtk.ApplicationWindow):
         if new_live:
             self._entry.get_completion().complete()
 
-    # ── Tooltip ───────────────────────────────────────────────────────────────
-    def _on_result_hover(self, widget, event):
-        info = widget.get_path_at_pos(int(event.x), int(event.y))
-        if not info:
-            self._on_result_hover_leave()
-            return False
-        it   = self._res_store.get_iter(info[0])
-        link = self._res_store.get_value(it, 4)
-        if link != self._hover_link:
-            self._hover_link = link
-            self._statusbar.pop(self._hover_ctx)
-            self._statusbar.push(self._hover_ctx, link)
-        return False
-
-    def _on_result_hover_leave(self, *_):
-        self._hover_link = None
-        self._statusbar.pop(self._hover_ctx)
-
     # ── Keyboard shortcuts ────────────────────────────────────────────────────
-    def _on_key_press(self, _widget, event):
-        key  = event.keyval
-        ctrl = event.state & Gdk.ModifierType.CONTROL_MASK
+    def _on_key_press(self, _controller, keyval, _keycode, state):
+        key  = keyval
+        ctrl = state & Gdk.ModifierType.CONTROL_MASK
 
         if ctrl and key == Gdk.KEY_Tab:
             n = self._notebook.get_n_pages()
@@ -1532,27 +1529,26 @@ class ScoutWindow(Gtk.ApplicationWindow):
             return True
         if key == Gdk.KEY_Return and not self._entry.has_focus():
             if self._notebook.get_current_page() == 0:
-                _, paths = self._res_view.get_selection().get_selected_rows()
-                if len(paths) > 1:
-                    self._open_results_multi(paths)
+                items = self._selected_items(self._res_selection)
+                if len(items) > 1:
+                    self._open_results_multi(items)
                     return True
             return False
         if ctrl and key == Gdk.KEY_Return:
             if self._notebook.get_current_page() == 0 and not self._entry.has_focus():
-                _, paths = self._res_view.get_selection().get_selected_rows()
-                if paths:
-                    self._open_results_multi(paths)
+                items = self._selected_items(self._res_selection)
+                if items:
+                    self._open_results_multi(items)
             return True
         if ctrl and key == Gdk.KEY_b:
             if self._notebook.get_current_page() == 0 and not self._entry.has_focus():
-                model, paths = self._res_view.get_selection().get_selected_rows()
-                if paths:
+                items = self._selected_items(self._res_selection)
+                if items:
                     bm_urls = self._bookmarked_urls()
-                    links   = [model.get_value(model.get_iter(p), 4) for p in paths]
-                    if all(l in bm_urls for l in links):
-                        self._unbookmark_results_multi(paths)
+                    if all(it.link in bm_urls for it in items):
+                        self._unbookmark_results_multi(items)
                     else:
-                        self._bookmark_results_multi(paths)
+                        self._bookmark_results_multi(items)
             return True
         if key == Gdk.KEY_question and not self._entry.has_focus():
             self._show_shortcuts(self._help_btn)
@@ -1560,20 +1556,15 @@ class ScoutWindow(Gtk.ApplicationWindow):
         return False
 
     def _focus_active_table(self):
-        self._entry.get_completion().complete()  # collapse any open popup
         page  = self._notebook.get_current_page()
         views = [self._res_view, self._bm_view, self._hist_view]
+        sels  = [self._res_selection, self._bm_selection, self._hist_selection]
         if page >= len(views):
             return
-        view = views[page]
-        view.grab_focus()
-        sel = view.get_selection()
-        if sel.count_selected_rows() == 0:
-            it = view.get_model().get_iter_first()
-            if it:
-                sel.select_iter(it)
-                path = view.get_model().get_path(it)
-                view.scroll_to_cell(path, None, True, 0.0, 0.0)
+        views[page].grab_focus()
+        sel = sels[page]
+        if sel.get_selection().get_size() == 0 and sel.get_n_items() > 0:
+            sel.select_item(0, True)
 
     # ── Settings persist ──────────────────────────────────────────────────────
     def _load_settings(self):
