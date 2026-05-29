@@ -431,7 +431,13 @@ class ScoutWindow(Gtk.ApplicationWindow):
         self._bm_undo_data       = []
 
         self._build_ui()
+        self._load_settings()           # apply persisted prefs after widgets exist
+        self._forums_bar.set_visible(self._forums_bar_visible)
+        self._forums_toggle.set_label(
+            "Forums ▾" if self._forums_bar_visible else "Forums ▸"
+        )
         self._setup_controllers()
+        self.connect("close-request", self._on_close)
         self.present()
 
     # ── UI ────────────────────────────────────────────────────────────────────
@@ -444,13 +450,8 @@ class ScoutWindow(Gtk.ApplicationWindow):
         notebook = self._build_notebook()
         notebook.set_vexpand(True)
         root.append(notebook)
-        # statusbar (Step 6) appended in a later step
 
-        # apply initial forums-bar visibility (settings load in Step 6)
-        self._forums_bar.set_visible(self._forums_bar_visible)
-        self._forums_toggle.set_label(
-            "Forums ▾" if self._forums_bar_visible else "Forums ▸"
-        )
+        root.append(self._build_statusbar())
 
     # ── Top bar ───────────────────────────────────────────────────────────────
     def _build_topbar(self):
@@ -468,7 +469,6 @@ class ScoutWindow(Gtk.ApplicationWindow):
         self._entry.set_hexpand(True)
         self._entry.connect("activate", self._on_search)
         self._entry.connect("changed",  self._on_entry_changed)
-        # live suggestions / completion wired in Step 5 (_build_completion)
         row1.append(self._entry)
 
         self._btn = Gtk.Button(label=S["search_btn"])
@@ -536,6 +536,7 @@ class ScoutWindow(Gtk.ApplicationWindow):
         self._hits_spin = Gtk.SpinButton(adjustment=adj, climb_rate=1, digits=0)
         row4.append(self._hits_spin)
 
+        self._build_completion()   # suggestion popover anchored to the entry
         return bar
 
     def _toggle_forums_bar(self, *_):
@@ -828,36 +829,37 @@ class ScoutWindow(Gtk.ApplicationWindow):
 
     # ── Status bar ────────────────────────────────────────────────────────────
     def _build_statusbar(self):
-        self._statusbar = Gtk.Statusbar()
-        self._statusbar.get_style_context().add_class("statusbar")
-        self._ctx       = self._statusbar.get_context_id("main")
-        self._hover_ctx = self._statusbar.get_context_id("hover")
-        self._hover_link = None
+        # GTK4 has no GtkStatusbar push/pop — a plain label holds the message
+        self._statusbar = Gtk.Label(xalign=0)
+        self._statusbar.set_ellipsize(Pango.EllipsizeMode.END)
+        self._statusbar.set_hexpand(True)
+        self._statusbar.add_css_class("statusbar")
         self._set_status(S["ready"])
 
         self._suggest_lbl = Gtk.Label(label="loading suggestions…")
         self._suggest_lbl.set_margin_end(8)
-        self._suggest_lbl.set_no_show_all(True)
+        self._suggest_lbl.set_visible(False)
 
         self._undo_btn = Gtk.Button(label="Undo")
         self._undo_btn.set_tooltip_text("Restore last deleted bookmark(s) (Ctrl+Z)")
         self._undo_btn.connect("clicked", self._bm_undo)
-        self._undo_btn.set_no_show_all(True)
+        self._undo_btn.set_visible(False)
 
-        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        box.pack_start(self._statusbar,   True,  True,  0)
-        box.pack_end(self._suggest_lbl,   False, False, 0)
-        box.pack_end(self._undo_btn,      False, False, 0)
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        box.set_margin_start(6)
+        box.set_margin_end(6)
+        box.set_margin_bottom(4)
+        box.append(self._statusbar)
+        box.append(self._suggest_lbl)
+        box.append(self._undo_btn)
         return box
 
     def _set_status(self, msg: str):
-        if not hasattr(self, "_statusbar"):
-            return  # statusbar built in Step 6
-        self._statusbar.pop(self._ctx)
-        self._statusbar.push(self._ctx, msg)
+        self._statusbar.set_label(msg)
 
     # ── Search logic ─────────────────────────────────────────────────────────
     def _on_search(self, *_):
+        self._completion_popover.popdown()
         query = self._entry.get_text().strip()
         if not query or self._busy:
             return
@@ -1329,15 +1331,15 @@ class ScoutWindow(Gtk.ApplicationWindow):
     def _hist_clear(self, *_):
         self._hist_store.remove_all()
         open(HISTORY_FILE, "w").close()
-        # Reset completion to seeds only (completion built in Step 5)
-        if hasattr(self, "_completion_store"):
-            self._completion_store.clear()
-            self._completion_seen.clear()
-            for term in _SEED_TERMS:
-                key = term.lower()
-                if key not in self._completion_seen:
-                    self._completion_seen.add(key)
-                    self._completion_store.append([term])
+        # Reset completion to seeds only
+        self._completion_store.splice(0, self._completion_store.get_n_items(), [])
+        self._completion_seen.clear()
+        self._live_count = 0
+        for term in _SEED_TERMS:
+            key = term.lower()
+            if key not in self._completion_seen:
+                self._completion_seen.add(key)
+                self._completion_store.append(term)
 
     def _on_hist_activate(self, _cv, position):
         item = self._hist_selection.get_item(position)
@@ -1347,9 +1349,11 @@ class ScoutWindow(Gtk.ApplicationWindow):
             self._notebook.set_current_page(0)
 
     # ── Autocomplete ──────────────────────────────────────────────────────────
-    def _build_completion(self) -> Gtk.EntryCompletion:
-        """Build EntryCompletion from seed terms + existing history (deduplicated)."""
-        self._completion_store = Gtk.ListStore(str)
+    def _build_completion(self):
+        """Suggestion dropdown: a Popover + ListView under the entry, fed by
+        seed terms + history (filtered by what's typed) plus live network hits.
+        GtkEntryCompletion is gone in GTK4, so this replaces it."""
+        self._completion_store = Gtk.StringList()
         self._completion_seen: set[str] = set()
 
         # Seeds first — provide value even on a fresh install
@@ -1357,9 +1361,9 @@ class ScoutWindow(Gtk.ApplicationWindow):
             key = term.lower()
             if key not in self._completion_seen:
                 self._completion_seen.add(key)
-                self._completion_store.append([term])
+                self._completion_store.append(term)
 
-        # History on top of seeds — personal terms override nothing, just dedup
+        # History on top of seeds — personal terms, just dedup
         if os.path.exists(HISTORY_FILE):
             try:
                 with open(HISTORY_FILE) as f:
@@ -1375,51 +1379,102 @@ class ScoutWindow(Gtk.ApplicationWindow):
             except Exception:
                 pass
 
-        completion = Gtk.EntryCompletion()
-        completion.set_model(self._completion_store)
-        completion.set_minimum_key_length(2)
-        completion.set_inline_completion(False)
-        completion.set_popup_set_width(True)
-        completion.set_popup_completion(True)
-        completion.set_match_func(self._completion_match)
-        completion.connect("match-selected", self._on_completion_selected)
+        self._completion_filter    = Gtk.CustomFilter.new(self._completion_match)
+        filtered                   = Gtk.FilterListModel(model=self._completion_store,
+                                                          filter=self._completion_filter)
+        self._completion_selection = Gtk.SingleSelection(model=filtered)
+        self._completion_selection.set_autoselect(False)
+        self._completion_selection.set_can_unselect(True)
 
-        # Ellipsize long titles so the popup never exceeds the window width
-        renderer = Gtk.CellRendererText()
-        renderer.set_property("ellipsize", Pango.EllipsizeMode.END)
-        completion.pack_start(renderer, True)
-        completion.add_attribute(renderer, "text", 0)
+        factory = Gtk.SignalListItemFactory()
+        factory.connect("setup", lambda _f, li: li.set_child(
+            Gtk.Label(xalign=0, ellipsize=Pango.EllipsizeMode.END)))
+        factory.connect("bind",  lambda _f, li: li.get_child().set_label(
+            li.get_item().get_string()))
 
-        return completion
+        self._completion_list = Gtk.ListView(model=self._completion_selection, factory=factory)
+        self._completion_list.set_single_click_activate(True)
+        self._completion_list.connect("activate", self._on_completion_activate)
 
-    def _completion_match(self, completion, typed_key, it):
-        if not typed_key.endswith(' '):
+        sw = Gtk.ScrolledWindow()
+        sw.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        sw.set_propagate_natural_height(True)
+        sw.set_max_content_height(220)
+        sw.set_min_content_width(320)
+        sw.set_child(self._completion_list)
+
+        self._completion_popover = Gtk.Popover()
+        self._completion_popover.set_parent(self._entry)
+        self._completion_popover.set_autohide(False)   # keep typing focus in the entry
+        self._completion_popover.set_has_arrow(False)
+        self._completion_popover.set_position(Gtk.PositionType.BOTTOM)
+        self._completion_popover.set_child(sw)
+
+    def _completion_match(self, item, _user_data=None):
+        text = self._entry.get_text().strip().lower()
+        if len(text) < 2:
             return False
-        text = self._completion_store.get_value(it, 0).lower()
-        return all(word in text for word in typed_key.split())
+        s = item.get_string().lower()
+        return all(word in s for word in text.split())
 
     def _completion_add(self, query: str):
         """Add a query to the completion model if not already present."""
         key = query.strip().lower()
         if key and key not in self._completion_seen:
             self._completion_seen.add(key)
-            self._completion_store.prepend([query.strip()])  # newest at top
+            self._completion_store.splice(0, 0, [query.strip()])  # newest at top
 
-    def _on_completion_selected(self, completion, model, it):
-        """User picked a suggestion — fill entry and fire search immediately."""
-        term = model.get_value(it, 0)
+    def _entry_has_focus(self):
+        # Gtk.Entry wraps an inner GtkText that actually holds focus, so
+        # entry.has_focus() is False — check the window's focus widget instead
+        f = self.get_focus()
+        return f is not None and (f is self._entry or f.is_ancestor(self._entry))
+
+    def _update_completion_popover(self):
+        show = (len(self._entry.get_text().strip()) >= 2
+                and self._completion_selection.get_n_items() > 0
+                and self._entry_has_focus()
+                and not self._busy)
+        if show:
+            # match the entry width so ellipsized rows don't collapse to nothing
+            self._completion_popover.set_size_request(max(self._entry.get_width(), 240), -1)
+            if not self._completion_popover.is_visible():
+                self._completion_popover.popup()
+        else:
+            self._completion_popover.popdown()
+
+    def _completion_move(self, delta):
+        n = self._completion_selection.get_n_items()
+        if n == 0:
+            return
+        cur = self._completion_selection.get_selected()
+        if cur == Gtk.INVALID_LIST_POSITION:
+            nxt = 0 if delta > 0 else n - 1
+        else:
+            nxt = max(0, min(n - 1, cur + delta))
+        self._completion_selection.set_selected(nxt)
+
+    def _accept_completion(self, term: str):
+        self._completion_popover.popdown()
         self._entry.set_text(term)
+        self._entry.set_position(-1)
         self._on_search()
-        return True   # prevent default handler from overwriting the entry
+
+    def _on_completion_activate(self, _listview, position):
+        item = self._completion_selection.get_item(position)
+        if item is not None:
+            self._accept_completion(item.get_string())
 
     # ── Live suggestions ──────────────────────────────────────────────────────
     def _on_entry_changed(self, entry):
-        """Debounce: schedule live suggestion fetch 400ms after last keystroke."""
-        if not hasattr(self, "_completion_store"):
-            return  # live suggestions not built yet (Step 5)
+        """Re-filter local suggestions immediately; debounce the network fetch."""
         text = entry.get_text().strip()
 
-        # Cancel any pending timer
+        # local seed/history matches update instantly
+        self._completion_filter.changed(Gtk.FilterChange.DIFFERENT)
+        self._update_completion_popover()
+
+        # Cancel any pending network-suggestion timer
         if self._suggest_timer is not None:
             GLib.source_remove(self._suggest_timer)
             self._suggest_timer = None
@@ -1445,7 +1500,8 @@ class ScoutWindow(Gtk.ApplicationWindow):
         if not active:
             return False
 
-        self._suggest_lbl.show()
+        self._suggest_lbl.set_visible(True)
+        self._suggest_start = GLib.get_monotonic_time()
         threading.Thread(
             target=self._suggestions_thread,
             args=(term, token, active),
@@ -1470,34 +1526,53 @@ class ScoutWindow(Gtk.ApplicationWindow):
         """Main thread: replace previous live suggestions with new ones."""
         if token != self._suggest_token:
             return   # stale — a newer request already fired
-        self._suggest_lbl.hide()
+        self._suggest_lbl.set_visible(False)
+        elapsed = (GLib.get_monotonic_time() - self._suggest_start) / 1_000_000
 
-        # Remove previous live suggestions from the front of the store
-        for _ in range(self._live_count):
-            it = self._completion_store.get_iter_first()
-            if it:
-                self._completion_store.remove(it)
+        # Drop the previous live block from the front of the store
+        if self._live_count:
+            self._completion_store.splice(0, self._live_count, [])
         self._live_count = 0
 
-        # Prepend new live suggestions that aren't already in permanent store
-        new_live: list[str] = []
-        for s in suggestions:
-            if s.lower() not in self._completion_seen:
-                new_live.append(s)
-
-        # Insert in reverse so first result ends up at top
-        for s in reversed(new_live):
-            self._completion_store.prepend([s])
+        # Prepend new live suggestions not already in the permanent store
+        new_live = [s for s in suggestions if s.lower() not in self._completion_seen]
+        if new_live:
+            self._completion_store.splice(0, 0, new_live)  # first result on top
         self._live_count = len(new_live)
 
-        # Force the popup to appear with the new suggestions
+        # status feedback on how long the network round-trip took
         if new_live:
-            self._entry.get_completion().complete()
+            self._set_status(f"Suggestions loaded ({elapsed:.1f}s)")
+        else:
+            self._set_status("No suggestions")
+
+        # re-filter and reveal the dropdown with the fresh results
+        self._completion_filter.changed(Gtk.FilterChange.DIFFERENT)
+        self._update_completion_popover()
 
     # ── Keyboard shortcuts ────────────────────────────────────────────────────
     def _on_key_press(self, _controller, keyval, _keycode, state):
         key  = keyval
         ctrl = state & Gdk.ModifierType.CONTROL_MASK
+
+        # Suggestion dropdown navigation takes precedence while it is open
+        if self._completion_popover.is_visible() and self._entry_has_focus():
+            if key == Gdk.KEY_Down:
+                self._completion_move(1)
+                return True
+            if key == Gdk.KEY_Up:
+                self._completion_move(-1)
+                return True
+            if key == Gdk.KEY_Escape:
+                self._completion_popover.popdown()
+                return True
+            if key in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
+                item = self._completion_selection.get_selected_item()
+                if item is not None:
+                    self._accept_completion(item.get_string())
+                    return True
+                self._completion_popover.popdown()   # nothing picked → normal search
+                return False
 
         if ctrl and key == Gdk.KEY_Tab:
             n = self._notebook.get_n_pages()
@@ -1573,7 +1648,7 @@ class ScoutWindow(Gtk.ApplicationWindow):
                 cfg = json.load(f)
             w = cfg.get("width",  960)
             h = cfg.get("height", 640)
-            self.resize(w, h)
+            self.set_default_size(w, h)
             self._hits_spin.set_value(cfg.get("hits", DEFAULT_HITS))
             self._forums_bar_visible = cfg.get("forums_bar_visible", True)
             self._bm_bulk_confirm    = cfg.get("bm_bulk_confirm", True)
@@ -1585,10 +1660,9 @@ class ScoutWindow(Gtk.ApplicationWindow):
 
     def _save_settings(self):
         try:
-            w, h = self.get_size()
             cfg = {
-                "width":              w,
-                "height":             h,
+                "width":              self.get_width(),
+                "height":             self.get_height(),
                 "hits":               int(self._hits_spin.get_value()),
                 "forums_bar_visible": self._forums_bar_visible,
                 "bm_bulk_confirm":    self._bm_bulk_confirm,
@@ -1599,9 +1673,9 @@ class ScoutWindow(Gtk.ApplicationWindow):
         except Exception:
             pass
 
-    def _on_delete(self, *_):
+    def _on_close(self, *_):
         self._save_settings()
-        return False   # let the destroy signal proceed
+        return False   # let the window close
 
     # ── Helpers ───────────────────────────────────────────────────────────────
     @staticmethod
