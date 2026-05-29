@@ -678,6 +678,7 @@ class ScoutWindow(Gtk.ApplicationWindow):
 
         def on_setup(_f, list_item):
             lbl = Gtk.Label(xalign=0.5)
+            lbl.set_margin_end(6)
             list_item.set_child(lbl)
 
         def on_bind(_f, list_item):
@@ -731,7 +732,7 @@ class ScoutWindow(Gtk.ApplicationWindow):
         _column(S["col_title"], _factory("title", bold=True), expand=True)
         self._col_res_date  = _column(S["col_date"],  _factory("date"),                fixed_w=100,
                                       sorter=date_sorter)
-        _column("✓", self._make_solved_factory(), fixed_w=22)
+        _column("✓", self._make_solved_factory(), fixed_w=28)
 
         # Sorting only applies when the data flows through a SortListModel driven
         # by the ColumnView's own (header-click) sorter.
@@ -746,18 +747,20 @@ class ScoutWindow(Gtk.ApplicationWindow):
     # ── Bookmarks tab ─────────────────────────────────────────────────────────
     def _build_bm_tab(self):
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        vbox.set_margin_start(6)
-        vbox.set_margin_end(6)
         vbox.set_margin_top(6)
         vbox.set_margin_bottom(6)
 
-        # Filter entry
+        # Filter entry — inset like the toolbar
         self._bm_filter_entry = Gtk.SearchEntry()
         self._bm_filter_entry.set_placeholder_text("Filter bookmarks…")
+        self._bm_filter_entry.set_margin_start(6)
+        self._bm_filter_entry.set_margin_end(6)
         self._bm_filter_entry.connect("changed", self._on_bm_filter_changed)
         vbox.append(self._bm_filter_entry)
 
         tb = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        tb.set_margin_start(6)
+        tb.set_margin_end(6)
         vbox.append(tb)
         for label, cb in [
             (S["bm_open"], self._bm_open),
@@ -806,7 +809,7 @@ class ScoutWindow(Gtk.ApplicationWindow):
         cv.append_column(self._col_bm_date)
 
         solved_col = Gtk.ColumnViewColumn(title="✓", factory=self._make_solved_factory())
-        solved_col.set_fixed_width(22)
+        solved_col.set_fixed_width(28)
         cv.append_column(solved_col)
 
         sort_model = Gtk.SortListModel(model=filtered, sorter=cv.get_sorter())
@@ -822,12 +825,12 @@ class ScoutWindow(Gtk.ApplicationWindow):
     # ── History tab ───────────────────────────────────────────────────────────
     def _build_hist_tab(self):
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        vbox.set_margin_start(6)
-        vbox.set_margin_end(6)
         vbox.set_margin_top(6)
         vbox.set_margin_bottom(6)
 
         tb = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        tb.set_margin_start(6)
+        tb.set_margin_end(6)
         vbox.append(tb)
         for label, cb in [
             (S["hist_rerun"],  self._hist_rerun),
