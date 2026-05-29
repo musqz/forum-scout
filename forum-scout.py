@@ -1480,6 +1480,9 @@ class ScoutWindow(Gtk.ApplicationWindow):
         # window height minus ~80px (entry row + statusbar + padding)
         h = max(200, self.get_height() - 80)
         self._completion_sw.set_size_request(w, h)
+        # always start with no selection so a stale selection from a previous
+        # popup session cannot accidentally be accepted by pressing Enter
+        self._completion_selection.set_selected(Gtk.INVALID_LIST_POSITION)
         self._completion_popover.popup()
 
     def _update_completion_popover(self):
