@@ -1,32 +1,18 @@
 # Forum Scout — GTK4 port
 
-> **Work in progress** — GTK3 → GTK4 migration of [forum-scout](https://github.com/musqz/forum-scout).
+GTK3 → GTK4 migration of [forum-scout](https://github.com/musqz/forum-scout).
 
 Multi-forum search tool for Arch-based distros. Searches Mabox, EndeavourOS, Manjaro, CachyOS, Garuda, Arch Wiki, Manjaro Wiki, CachyOS Wiki, Arch BBS, KDE, GNOME and more simultaneously.
 
 ## Status
 
-The GTK4 port is functionally complete. All steps of the migration plan have been implemented and smoke-tested on **Openbox/X11 (Mabox)**. Further testing is needed before a packaged release.
+The GTK4 port is **complete**. All steps of the migration plan have been implemented, tested and cleaned up on **Openbox/X11 (Mabox)**.
 
-**Testing still needed:**
-- GNOME (CSD behaviour, Wayland)
-- KDE Plasma
-- Other Wayland compositors
+Testing on other desktops is welcome:
+- GNOME / Wayland — CSD behaviour untested
+- KDE Plasma — untested
 
-The `packaging/PKGBUILD` is present but not yet updated or tested for the GTK4 version — packaging is a later stage.
-
-| Step | What | State |
-|------|------|-------|
-| 0 | Repo setup + verbatim backend copy | ✅ |
-| 1 | GTK4 application skeleton | ✅ |
-| 2 | Top bar (search entry, forums bar, checkboxes) | ✅ |
-| 3 | Results tab (ColumnView, multi-select, sort) | ✅ |
-| 4 | Bookmarks + History tabs | ✅ |
-| 5 | Event controllers (keyboard shortcuts, right-click menu) | ✅ |
-| 6 | Statusbar, settings persistence, suggestion dropdown | ✅ |
-| 7 | About tab | ✅ |
-| 8 | CSS / theming — follows system theme (no custom CSS) | ✅ |
-| 9 | Cleanup + smoke test | ✅ |
+The `packaging/PKGBUILD` is present but not yet updated for the GTK4 version — packaging is a later stage.
 
 ## What changed from the GTK3 version
 
@@ -48,6 +34,16 @@ The app follows the system theme and does not force client-side decorations:
 
 - **Openbox / KDE (X11)** — the window manager draws the titlebar
 - **GNOME / Wayland** — GTK4 draws its own CSD automatically
+
+## GTK4 theme
+
+GTK4 reads its settings from `~/.config/gtk-4.0/settings.ini` separately from GTK3. If your GTK3 dark theme also has a GTK4 variant (most do), create that file to match:
+
+```ini
+[Settings]
+gtk-theme-name=YourThemeName
+gtk-application-prefer-dark-theme=true
+```
 
 ## Dependencies
 
