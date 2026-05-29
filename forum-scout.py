@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 # ─────────────────────────────────────────────────────────────────────────────
-# FORUM SCOUT — Multi-forum search tool (GTK3)
+# FORUM SCOUT — Multi-forum search tool (GTK4)
 # Forum registry loaded from forums.conf (see forums.conf for format).
 # ─────────────────────────────────────────────────────────────────────────────
 
 import gi
-gi.require_version("Gtk", "3.0")
-gi.require_version("Gdk", "3.0")
-from gi.repository import Gtk, Gdk, GLib, Pango
+gi.require_version("Gtk", "4.0")
+gi.require_version("Gdk", "4.0")
+from gi.repository import Gtk, Gdk, GLib, Pango, Gio, GObject
 
 import threading
 import os
@@ -374,44 +374,29 @@ _SEED_TERMS = [
 
 # ─── CSS ──────────────────────────────────────────────────────────────────────
 # ─── Main window ──────────────────────────────────────────────────────────────
-class ScoutWindow(Gtk.Window):
+class ScoutWindow(Gtk.ApplicationWindow):
 
-    def __init__(self):
-        super().__init__(title=APP_TITLE)
+    def __init__(self, app):
+        super().__init__(application=app, title=APP_TITLE)
         self.set_icon_name("system-search")
         self.set_default_size(820, 520)
         self.set_size_request(700, 300)
-        self.set_border_width(0)
 
         self._busy               = False
         self._results            = []
-        self._bm_data            = []     # master list for bookmark filter/sort
-        self._suggest_timer      = None   # GLib debounce timer id
-        self._suggest_token      = 0      # incremented per request to cancel stale responses
-        self._live_count         = 0      # live suggestions currently at front of completion store
+        self._bm_data            = []
+        self._suggest_timer      = None
+        self._suggest_token      = 0
+        self._live_count         = 0
         self._forums_bar_visible = True
         self._bm_bulk_confirm    = True
-        self._bm_undo_data       = []     # rows saved for undo after last delete
+        self._bm_undo_data       = []
 
-        self._build_ui()
-        self._load_settings()          # apply persisted prefs after widgets exist
-
-        self.connect("key-press-event", self._on_key_press)
-        self.connect("delete-event",    self._on_delete)
-        self.connect("destroy", Gtk.main_quit)
-        self.show_all()
-        if not self._forums_bar_visible:
-            self._forums_bar.hide()
-            self._forums_toggle.set_label("Forums ▸")
+        self.present()
 
     # ── UI ────────────────────────────────────────────────────────────────────
     def _build_ui(self):
-        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        self.add(root)
-
-        root.pack_start(self._build_topbar(),  False, False, 0)
-        root.pack_start(self._build_notebook(), True,  True,  0)
-        root.pack_start(self._build_statusbar(), False, False, 0)
+        pass
 
     # ── Top bar ───────────────────────────────────────────────────────────────
     def _build_topbar(self):
@@ -1532,7 +1517,11 @@ class ScoutWindow(Gtk.Window):
 
 
 # ─── Entry point ──────────────────────────────────────────────────────────────
+def on_activate(app):
+    ScoutWindow(app)
+
 if __name__ == "__main__":
     GLib.set_prgname("forum-scout")
-    win = ScoutWindow()
-    Gtk.main()
+    app = Gtk.Application(application_id="org.musqz.forum-scout")
+    app.connect("activate", on_activate)
+    app.run(None)
