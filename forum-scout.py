@@ -372,7 +372,6 @@ _SEED_TERMS = [
 ]
 
 
-# ─── CSS ──────────────────────────────────────────────────────────────────────
 # ─── Data models ──────────────────────────────────────────────────────────────
 class ResultItem(GObject.Object):
     __gtype_name__ = "ResultItem"
@@ -743,7 +742,6 @@ class ScoutWindow(Gtk.ApplicationWindow):
         self._bm_selection = Gtk.MultiSelection(model=sort_model)
         cv.set_model(self._bm_selection)
         cv.sort_by_column(self._col_bm_date, Gtk.SortType.DESCENDING)
-        # key shortcuts (Delete / Return) wired in Step 5
 
         sw.set_child(cv)
         vbox.append(sw)
@@ -861,20 +859,25 @@ class ScoutWindow(Gtk.ApplicationWindow):
 
     # ── Search logic ─────────────────────────────────────────────────────────
     def _on_search(self, *_):
+        # close the suggestion dropdown and invalidate any in-flight/pending
+        # suggestion fetch so it can't reopen over the results
         self._completion_popover.popdown()
+        if self._suggest_timer is not None:
+            GLib.source_remove(self._suggest_timer)
+            self._suggest_timer = None
+        self._suggest_token += 1
+        self._suggest_lbl.set_visible(False)
+
         query = self._entry.get_text().strip()
         if not query or self._busy:
             return
-        if not hasattr(self, "_res_store"):
-            return  # results tab not built yet (Step 3)
 
         active = [f for f in FORUMS if self._checks[f["name"]].get_active()]
         if not active:
             self._set_status(S["no_results"])
             return
 
-        if hasattr(self, "_undo_btn"):
-            self._undo_btn.set_visible(False)   # statusbar built in Step 6
+        self._undo_btn.set_visible(False)
         self._bm_undo_data = []
         self._busy = True
         self._btn.set_sensitive(False)
@@ -1256,8 +1259,7 @@ class ScoutWindow(Gtk.ApplicationWindow):
             self._mark_result_unbookmarked(link)
         self._write_bookmarks()
         self._set_status(S["bm_removed"])
-        if hasattr(self, "_undo_btn"):
-            self._undo_btn.set_visible(True)   # undo button built in Step 6
+        self._undo_btn.set_visible(True)
 
     def _bm_remove_by_link(self, link: str):
         self._bm_data = [r for r in self._bm_data if r[2] != link]
@@ -1273,8 +1275,7 @@ class ScoutWindow(Gtk.ApplicationWindow):
         self._bm_undo_data = []
         self._bm_refresh()
         self._write_bookmarks()
-        if hasattr(self, "_undo_btn"):
-            self._undo_btn.set_visible(False)
+        self._undo_btn.set_visible(False)
         self._set_status("Undo: bookmark(s) restored.")
 
     def _bm_selected_links(self) -> set:
@@ -1301,8 +1302,7 @@ class ScoutWindow(Gtk.ApplicationWindow):
         with open(HISTORY_FILE, "a") as f:
             f.write(f"{ts} - {query}\n")
         self._hist_store.insert(0, HistoryItem(ts, query))   # newest at top
-        if hasattr(self, "_completion_store"):
-            self._completion_add(query)             # completion built in Step 5
+        self._completion_add(query)   # also offer it as a future suggestion
 
     def _load_history(self):
         self._hist_store.remove_all()
