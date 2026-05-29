@@ -12,7 +12,11 @@ Testing on other desktops is welcome:
 - GNOME / Wayland — CSD behaviour untested
 - KDE Plasma — untested
 
-The `packaging/PKGBUILD` is present but not yet updated for the GTK4 version — packaging is a later stage.
+Available on the AUR as `forum-scout-gtk4`. Provides and conflicts with `forum-scout` — only one version (GTK3 / GTK4 / Qt) can be installed at a time.
+
+```bash
+yay -S forum-scout-gtk4
+```
 
 ## What changed from the GTK3 version
 
