@@ -1401,8 +1401,6 @@ class ScoutWindow(Gtk.ApplicationWindow):
 
         self._completion_sw = Gtk.ScrolledWindow()
         self._completion_sw.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        self._completion_sw.set_propagate_natural_height(True)
-        self._completion_sw.set_min_content_width(320)
         self._completion_sw.set_child(self._completion_list)
 
         self._completion_popover = Gtk.Popover()
@@ -1439,13 +1437,13 @@ class ScoutWindow(Gtk.ApplicationWindow):
         return f is not None and (f is self._entry or f.is_ancestor(self._entry))
 
     def _popup_completion(self):
-        """Size the popover to fill from below the entry to the window bottom,
-        then open it."""
+        """Size the suggestion popup to fill from below the entry to the window
+        bottom, then open it. Uses set_size_request on the inner ScrolledWindow
+        so the height is always applied regardless of content size."""
         w = max(self._entry.get_width(), 240)
-        # window height minus ~80px (entry row + statusbar + a little padding)
-        available_h = max(200, self.get_height() - 80)
-        self._completion_sw.set_max_content_height(available_h)
-        self._completion_popover.set_size_request(w, -1)
+        # window height minus ~80px (entry row + statusbar + padding)
+        h = max(200, self.get_height() - 80)
+        self._completion_sw.set_size_request(w, h)
         self._completion_popover.popup()
 
     def _update_completion_popover(self):
@@ -1571,6 +1569,8 @@ class ScoutWindow(Gtk.ApplicationWindow):
         self._completion_filter.changed(Gtk.FilterChange.DIFFERENT)
         if new_live and self._entry_has_focus() and not self._busy:
             self._popup_completion()
+            # select the first item so focus lands on the newest suggestion
+            self._completion_selection.set_selected(0)
         else:
             self._update_completion_popover()
 
