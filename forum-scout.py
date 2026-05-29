@@ -1261,6 +1261,7 @@ class ScoutWindow(Gtk.ApplicationWindow):
 
     def _confirm_bulk_delete(self, links):
         dlg = Gtk.Window(title="Confirm delete", modal=True, transient_for=self)
+        dlg.set_resizable(False)
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         box.set_margin_top(16); box.set_margin_bottom(16)
         box.set_margin_start(16); box.set_margin_end(16)
@@ -1276,6 +1277,13 @@ class ScoutWindow(Gtk.ApplicationWindow):
         btns.append(delete)
         box.append(btns)
         dlg.set_child(box)
+
+        # Escape closes the dialog
+        esc = Gtk.EventControllerKey()
+        esc.connect("key-pressed", lambda c, k, *_:
+                    dlg.destroy() or True if k == Gdk.KEY_Escape else False)
+        dlg.add_controller(esc)
+
         cancel.connect("clicked", lambda *_: dlg.destroy())
 
         def do_delete(*_):
@@ -1287,6 +1295,8 @@ class ScoutWindow(Gtk.ApplicationWindow):
 
         delete.connect("clicked", do_delete)
         dlg.present()
+        # set initial focus on Cancel so Tab cycles Cancel → Delete → checkbox
+        cancel.grab_focus()
 
     def _do_bm_remove(self, links):
         self._bm_undo_data = [r for r in self._bm_data if r[2] in links]
