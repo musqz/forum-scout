@@ -1399,27 +1399,28 @@ class ScoutWindow(Gtk.ApplicationWindow):
         self._completion_list.set_single_click_activate(True)
         self._completion_list.connect("activate", self._on_completion_activate)
 
-        sw = Gtk.ScrolledWindow()
-        sw.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        sw.set_propagate_natural_height(True)
-        sw.set_max_content_height(220)
-        sw.set_min_content_width(320)
-        sw.set_child(self._completion_list)
+        self._completion_sw = Gtk.ScrolledWindow()
+        self._completion_sw.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self._completion_sw.set_propagate_natural_height(True)
+        self._completion_sw.set_min_content_width(320)
+        self._completion_sw.set_child(self._completion_list)
 
         self._completion_popover = Gtk.Popover()
         self._completion_popover.set_parent(self._entry)
         self._completion_popover.set_autohide(False)   # keep typing focus in the entry
         self._completion_popover.set_has_arrow(False)
         self._completion_popover.set_position(Gtk.PositionType.BOTTOM)
-        self._completion_popover.set_child(sw)
+        self._completion_popover.set_child(self._completion_sw)
 
     def _completion_match(self, item, _user_data=None):
-        raw = self._entry.get_text()
-        # only show suggestions at word boundaries (after a space)
-        if not raw.endswith(' '):
-            return False
+        raw  = self._entry.get_text()
         text = raw.strip().lower()
         if len(text) < 2:
+            return False
+        # require a trailing space to show local seeds/history (word boundary);
+        # if live network results are loaded (_live_count > 0) also match on
+        # partial text so they remain visible while the user keeps typing
+        if not raw.endswith(' ') and self._live_count == 0:
             return False
         s = item.get_string().lower()
         return all(word in s for word in text.split())
@@ -1437,6 +1438,16 @@ class ScoutWindow(Gtk.ApplicationWindow):
         f = self.get_focus()
         return f is not None and (f is self._entry or f.is_ancestor(self._entry))
 
+    def _popup_completion(self):
+        """Size the popover to fill from below the entry to the window bottom,
+        then open it."""
+        w = max(self._entry.get_width(), 240)
+        # window height minus ~80px (entry row + statusbar + a little padding)
+        available_h = max(200, self.get_height() - 80)
+        self._completion_sw.set_max_content_height(available_h)
+        self._completion_popover.set_size_request(w, -1)
+        self._completion_popover.popup()
+
     def _update_completion_popover(self):
         raw = self._entry.get_text()
         show = (raw.endswith(' ')                           # word-boundary trigger
@@ -1445,10 +1456,8 @@ class ScoutWindow(Gtk.ApplicationWindow):
                 and self._entry_has_focus()
                 and not self._busy)
         if show:
-            # match the entry width so ellipsized rows don't collapse to nothing
-            self._completion_popover.set_size_request(max(self._entry.get_width(), 240), -1)
             if not self._completion_popover.is_visible():
-                self._completion_popover.popup()
+                self._popup_completion()
         else:
             self._completion_popover.popdown()
 
@@ -1557,9 +1566,13 @@ class ScoutWindow(Gtk.ApplicationWindow):
         else:
             self._set_status("No suggestions")
 
-        # re-filter and reveal the dropdown with the fresh results
+        # re-filter; force the popup open if we have new live results and the
+        # entry still has focus (the space-gate only applies to the initial open)
         self._completion_filter.changed(Gtk.FilterChange.DIFFERENT)
-        self._update_completion_popover()
+        if new_live and self._entry_has_focus() and not self._busy:
+            self._popup_completion()
+        else:
+            self._update_completion_popover()
 
     # ── Keyboard shortcuts ────────────────────────────────────────────────────
     def _on_key_press(self, _controller, keyval, _keycode, state):
