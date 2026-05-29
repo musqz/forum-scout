@@ -1606,8 +1606,10 @@ class ScoutWindow(Gtk.ApplicationWindow):
         self._completion_filter.changed(Gtk.FilterChange.DIFFERENT)
         if new_live and self._entry_has_focus() and not self._busy:
             self._popup_completion()
-            # select and scroll to item 0 so the newest suggestion is at the top
-            self._completion_selection.set_selected(0)
+            # scroll to top so first suggestion is visible, but do NOT
+            # pre-select — focus stays in the entry so the user can keep
+            # typing a custom search and press Enter normally
+            self._completion_selection.set_selected(Gtk.INVALID_LIST_POSITION)
             self._completion_list.scroll_to(0, Gtk.ListScrollFlags.NONE, None)
         else:
             self._update_completion_popover()
@@ -1629,12 +1631,15 @@ class ScoutWindow(Gtk.ApplicationWindow):
                 self._completion_popover.popdown()
                 return True
             if key in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
-                item = self._completion_selection.get_selected_item()
-                if item is not None:
-                    self._accept_completion(item.get_string())
-                    return True
-                self._completion_popover.popdown()   # nothing picked → normal search
-                return False
+                # only accept a suggestion if the user explicitly navigated
+                # to one with arrow keys; otherwise dismiss and search normally
+                if self._completion_selection.get_selected() != Gtk.INVALID_LIST_POSITION:
+                    item = self._completion_selection.get_selected_item()
+                    if item is not None:
+                        self._accept_completion(item.get_string())
+                        return True
+                self._completion_popover.popdown()
+                return False   # let Entry's activate → _on_search fire
 
         if ctrl and key == Gdk.KEY_Tab:
             n = self._notebook.get_n_pages()
