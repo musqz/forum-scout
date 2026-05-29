@@ -47,10 +47,13 @@ gtk-application-prefer-dark-theme=true
 
 ## Dependencies
 
-- Python 3
-- GTK 4
-- `python-gobject`
-- `python-requests`
+| Package | Arch / AUR name | Tested version |
+|---------|----------------|----------------|
+| Python 3 | `python` | 3.14.5 |
+| GTK 4 | `gtk4` | 4.22.4 |
+| GLib | `glib2` | 2.88.1 |
+| PyGObject | `python-gobject` | 3.56.3 |
+| requests | `python-requests` | 2.34.2 |
 
 ## Run from source
 
