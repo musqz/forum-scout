@@ -1678,12 +1678,14 @@ class ScoutWindow(Gtk.ApplicationWindow):
                 return False   # let Entry's activate → _on_search fire
 
         if ctrl and key == Gdk.KEY_Tab:
-            n = self._notebook.get_n_pages()
-            self._notebook.set_current_page((self._notebook.get_current_page() + 1) % n)
+            navigable = self._notebook.get_n_pages() - 1   # exclude About tab
+            page = min(self._notebook.get_current_page(), navigable - 1)
+            self._notebook.set_current_page((page + 1) % navigable)
             return True
         if ctrl and key == Gdk.KEY_ISO_Left_Tab:
-            n = self._notebook.get_n_pages()
-            self._notebook.set_current_page((self._notebook.get_current_page() - 1) % n)
+            navigable = self._notebook.get_n_pages() - 1   # exclude About tab
+            page = min(self._notebook.get_current_page(), navigable - 1)
+            self._notebook.set_current_page((page - 1) % navigable)
             return True
         if ctrl and key == Gdk.KEY_l:
             self._entry.grab_focus()
