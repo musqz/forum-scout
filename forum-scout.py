@@ -622,33 +622,50 @@ class ScoutWindow(Gtk.ApplicationWindow):
             lbl.set_ellipsize(Pango.EllipsizeMode.END)
             list_item.set_child(lbl)
 
-        def on_bind(_f, list_item):
-            obj  = list_item.get_item()
-            lbl  = list_item.get_child()
-            if bind:
-                list_item._binding = obj.bind_property(
-                    attr, lbl, "label", GObject.BindingFlags.SYNC_CREATE)
-                return
+        def render(list_item):
+            """Apply markup/text to the label, respecting selection state."""
+            obj = list_item.get_item()
+            lbl = list_item.get_child()
             esc = GLib.markup_escape_text(getattr(obj, attr))
-            if colored and bold:
+            # when the row is selected, drop the forum color so the theme's
+            # selection text color (white/light) shows through instead of
+            # invisible same-color-on-same-color text
+            use_color = colored and not list_item.get_selected()
+            if use_color and bold:
                 lbl.set_markup(f'<span foreground="{obj.color}" weight="600">{esc}</span>')
-            elif colored:
+            elif use_color:
                 lbl.set_markup(f'<span foreground="{obj.color}">{esc}</span>')
             elif bold:
                 lbl.set_markup(f'<span weight="600">{esc}</span>')
             else:
                 lbl.set_label(getattr(obj, attr))
 
+        def on_bind(_f, list_item):
+            obj = list_item.get_item()
+            lbl = list_item.get_child()
+            if bind:
+                list_item._binding = obj.bind_property(
+                    attr, lbl, "label", GObject.BindingFlags.SYNC_CREATE)
+                return
+            render(list_item)
+            if colored:
+                # re-render when selection state changes so color is updated
+                list_item._sel_id = list_item.connect(
+                    "notify::selected", lambda li, *_: render(li))
+
         def on_unbind(_f, list_item):
             b = getattr(list_item, "_binding", None)
             if b is not None:
                 b.unbind()
                 list_item._binding = None
+            sel_id = getattr(list_item, "_sel_id", None)
+            if sel_id is not None:
+                list_item.disconnect(sel_id)
+                list_item._sel_id = None
 
-        factory.connect("setup", on_setup)
-        factory.connect("bind",  on_bind)
-        if bind:
-            factory.connect("unbind", on_unbind)
+        factory.connect("setup",   on_setup)
+        factory.connect("bind",    on_bind)
+        factory.connect("unbind",  on_unbind)
         return factory
 
     # ── Results tab ───────────────────────────────────────────────────────────
