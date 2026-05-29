@@ -586,7 +586,7 @@ class ScoutWindow(Gtk.ApplicationWindow):
         self._notebook.append_page(self._build_results_tab(), self._res_tab_label)
         self._notebook.append_page(self._build_bm_tab(),   Gtk.Label(label=S["tab_bm"]))
         self._notebook.append_page(self._build_hist_tab(), Gtk.Label(label=S["tab_hist"]))
-        # about tab: Step 7
+        self._notebook.append_page(self._build_about_tab(), Gtk.Label(label=S["tab_about"]))
 
         return self._notebook
 
@@ -798,12 +798,13 @@ class ScoutWindow(Gtk.ApplicationWindow):
 
     # ── About tab ─────────────────────────────────────────────────────────────
     def _build_about_tab(self):
-        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        inner.set_border_width(16)
-        inner.set_valign(Gtk.Align.CENTER)
-        inner.set_halign(Gtk.Align.CENTER)
-        outer.set_valign(Gtk.Align.CENTER)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        box.set_halign(Gtk.Align.CENTER)
+        box.set_valign(Gtk.Align.CENTER)
+        box.set_margin_start(16)
+        box.set_margin_end(16)
+        box.set_margin_top(16)
+        box.set_margin_bottom(16)
 
         def _lbl(markup=None, text=None, size=None):
             l = Gtk.Label()
@@ -818,14 +819,15 @@ class ScoutWindow(Gtk.ApplicationWindow):
                 l.set_attributes(attrs)
             return l
 
-        inner.pack_start(_lbl(markup=f"<b>Forum Scout</b>", size=1.8),    False, False, 0)
-        inner.pack_start(_lbl(text=f"v{_VERSION}"),                        False, False, 0)
-        inner.pack_start(Gtk.Separator(),                                  False, False, 4)
-        inner.pack_start(_lbl(markup='<a href="https://github.com/musqz/forum-scout">github.com/musqz/forum-scout</a>'), False, False, 0)
-        inner.pack_start(_lbl(markup="musqz · MIT"),                       False, False, 0)
-
-        outer.pack_start(inner, True, True, 0)
-        return outer
+        box.append(_lbl(markup="<b>Forum Scout</b>", size=1.8))
+        box.append(_lbl(text=f"v{_VERSION}"))
+        sep = Gtk.Separator()
+        sep.set_margin_top(4)
+        sep.set_margin_bottom(4)
+        box.append(sep)
+        box.append(_lbl(markup='<a href="https://github.com/musqz/forum-scout">github.com/musqz/forum-scout</a>'))
+        box.append(_lbl(markup="musqz · MIT"))
+        return box
 
     # ── Status bar ────────────────────────────────────────────────────────────
     def _build_statusbar(self):
