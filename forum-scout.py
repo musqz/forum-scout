@@ -475,6 +475,7 @@ class ScoutWindow(Gtk.ApplicationWindow):
         row1.append(self._btn)
 
         self._spinner = Gtk.Spinner()
+        self._spinner.set_size_request(24, 24)
         row1.append(self._spinner)
 
         self._forums_toggle = Gtk.Button(label="Forums ▾")
@@ -1413,7 +1414,11 @@ class ScoutWindow(Gtk.ApplicationWindow):
         self._completion_popover.set_child(sw)
 
     def _completion_match(self, item, _user_data=None):
-        text = self._entry.get_text().strip().lower()
+        raw = self._entry.get_text()
+        # only show suggestions at word boundaries (after a space)
+        if not raw.endswith(' '):
+            return False
+        text = raw.strip().lower()
         if len(text) < 2:
             return False
         s = item.get_string().lower()
@@ -1433,7 +1438,9 @@ class ScoutWindow(Gtk.ApplicationWindow):
         return f is not None and (f is self._entry or f.is_ancestor(self._entry))
 
     def _update_completion_popover(self):
-        show = (len(self._entry.get_text().strip()) >= 2
+        raw = self._entry.get_text()
+        show = (raw.endswith(' ')                           # word-boundary trigger
+                and len(raw.strip()) >= 2
                 and self._completion_selection.get_n_items() > 0
                 and self._entry_has_focus()
                 and not self._busy)
@@ -1469,10 +1476,11 @@ class ScoutWindow(Gtk.ApplicationWindow):
 
     # ── Live suggestions ──────────────────────────────────────────────────────
     def _on_entry_changed(self, entry):
-        """Re-filter local suggestions immediately; debounce the network fetch."""
-        text = entry.get_text().strip()
+        """Update the suggestion popup; fire network fetch on word boundaries."""
+        raw  = entry.get_text()
+        text = raw.strip()
 
-        # local seed/history matches update instantly
+        # re-filter and show/hide popup (opens only when raw ends with space)
         self._completion_filter.changed(Gtk.FilterChange.DIFFERENT)
         self._update_completion_popover()
 
@@ -1481,7 +1489,8 @@ class ScoutWindow(Gtk.ApplicationWindow):
             GLib.source_remove(self._suggest_timer)
             self._suggest_timer = None
 
-        if len(text) < 3 or self._busy:
+        # only kick off a network fetch at word boundaries and when not searching
+        if not raw.endswith(' ') or len(text) < 2 or self._busy:
             return
 
         self._suggest_timer = GLib.timeout_add(
