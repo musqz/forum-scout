@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Forum Scout
+Comment=Search Arch-based forums and wikis simultaneously
+Exec=forum-scout
+Icon=system-search
+Terminal=false
+Type=Application
+Categories=Network;Utility;
+Keywords=forum;search;arch;mabox;manjaro;endeavouros;wiki;cachyos;garuda;rebornos;kde;gnome;
+StartupWMClass=Forum Scout
+StartupNotify=true
