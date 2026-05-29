@@ -6,7 +6,14 @@ Multi-forum search tool for Arch-based distros. Searches Mabox, EndeavourOS, Man
 
 ## Status
 
-The GTK4 port is functionally complete. All steps of the migration plan have been implemented and smoke-tested.
+The GTK4 port is functionally complete. All steps of the migration plan have been implemented and smoke-tested on **Openbox/X11 (Mabox)**. Further testing is needed before a packaged release.
+
+**Testing still needed:**
+- GNOME (CSD behaviour, Wayland)
+- KDE Plasma
+- Other Wayland compositors
+
+The `packaging/PKGBUILD` is present but not yet updated or tested for the GTK4 version — packaging is a later stage.
 
 | Step | What | State |
 |------|------|-------|
