@@ -387,6 +387,27 @@ class ResultItem(GObject.Object):
         self.date   = date
 
 
+class BookmarkItem(GObject.Object):
+    __gtype_name__ = "BookmarkItem"
+
+    def __init__(self, forum, title, link, date, color):
+        super().__init__()
+        self.forum = forum
+        self.title = title
+        self.link  = link
+        self.date  = date
+        self.color = color
+
+
+class HistoryItem(GObject.Object):
+    __gtype_name__ = "HistoryItem"
+
+    def __init__(self, time, query):
+        super().__init__()
+        self.time  = time
+        self.query = query
+
+
 # ─── Main window ──────────────────────────────────────────────────────────────
 class ScoutWindow(Gtk.ApplicationWindow):
 
@@ -558,9 +579,40 @@ class ScoutWindow(Gtk.ApplicationWindow):
 
         self._res_tab_label = Gtk.Label(label=S["tab_results"])
         self._notebook.append_page(self._build_results_tab(), self._res_tab_label)
-        # bookmarks + history tabs: Step 4; about tab: Step 7
+        self._notebook.append_page(self._build_bm_tab(),   Gtk.Label(label=S["tab_bm"]))
+        self._notebook.append_page(self._build_hist_tab(), Gtk.Label(label=S["tab_hist"]))
+        # about tab: Step 7
 
         return self._notebook
+
+    # ── ColumnView helpers ──────────────────────────────────────────────────────
+    @staticmethod
+    def _make_label_factory(attr, colored=False, bold=False):
+        """Label-per-cell factory; reads `attr` off the row item, optionally
+        coloring it with the item's `color` and/or bolding it."""
+        factory = Gtk.SignalListItemFactory()
+
+        def on_setup(_f, list_item):
+            lbl = Gtk.Label(xalign=0)
+            lbl.set_ellipsize(Pango.EllipsizeMode.END)
+            list_item.set_child(lbl)
+
+        def on_bind(_f, list_item):
+            obj  = list_item.get_item()
+            lbl  = list_item.get_child()
+            esc  = GLib.markup_escape_text(getattr(obj, attr))
+            if colored and bold:
+                lbl.set_markup(f'<span foreground="{obj.color}" weight="600">{esc}</span>')
+            elif colored:
+                lbl.set_markup(f'<span foreground="{obj.color}">{esc}</span>')
+            elif bold:
+                lbl.set_markup(f'<span weight="600">{esc}</span>')
+            else:
+                lbl.set_label(getattr(obj, attr))
+
+        factory.connect("setup", on_setup)
+        factory.connect("bind",  on_bind)
+        return factory
 
     # ── Results tab ───────────────────────────────────────────────────────────
     def _build_results_tab(self):
@@ -574,34 +626,7 @@ class ScoutWindow(Gtk.ApplicationWindow):
         cv.connect("activate", self._on_result_activate)
         self._res_view = cv
 
-        # One label-per-cell factory; optionally colored (forum) or bold (title)
-        def _factory(attr, colored=False, bold=False):
-            factory = Gtk.SignalListItemFactory()
-
-            def on_setup(_f, list_item):
-                lbl = Gtk.Label(xalign=0)
-                lbl.set_ellipsize(Pango.EllipsizeMode.END)
-                list_item.set_child(lbl)
-
-            def on_bind(_f, list_item):
-                obj  = list_item.get_item()
-                lbl  = list_item.get_child()
-                text = getattr(obj, attr)
-                if colored:
-                    lbl.set_markup(
-                        f'<span foreground="{obj.color}">'
-                        f'{GLib.markup_escape_text(text)}</span>'
-                    )
-                elif bold:
-                    lbl.set_markup(
-                        f'<span weight="600">{GLib.markup_escape_text(text)}</span>'
-                    )
-                else:
-                    lbl.set_label(text)
-
-            factory.connect("setup", on_setup)
-            factory.connect("bind",  on_bind)
-            return factory
+        _factory = self._make_label_factory
 
         def _column(title, factory, fixed_w=None, expand=False, sorter=None):
             col = Gtk.ColumnViewColumn(title=title, factory=factory)
@@ -637,16 +662,19 @@ class ScoutWindow(Gtk.ApplicationWindow):
     # ── Bookmarks tab ─────────────────────────────────────────────────────────
     def _build_bm_tab(self):
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        vbox.set_border_width(6)
+        vbox.set_margin_start(6)
+        vbox.set_margin_end(6)
+        vbox.set_margin_top(6)
+        vbox.set_margin_bottom(6)
 
         # Filter entry
         self._bm_filter_entry = Gtk.SearchEntry()
         self._bm_filter_entry.set_placeholder_text("Filter bookmarks…")
         self._bm_filter_entry.connect("changed", self._on_bm_filter_changed)
-        vbox.pack_start(self._bm_filter_entry, False, False, 0)
+        vbox.append(self._bm_filter_entry)
 
         tb = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-        vbox.pack_start(tb, False, False, 0)
+        vbox.append(tb)
         for label, cb in [
             (S["bm_open"], self._bm_open),
             (S["bm_copy"], self._bm_copy),
@@ -654,99 +682,99 @@ class ScoutWindow(Gtk.ApplicationWindow):
         ]:
             btn = Gtk.Button(label=label)
             btn.connect("clicked", cb)
-            tb.pack_start(btn, False, False, 0)
+            tb.append(btn)
 
         sw = Gtk.ScrolledWindow()
         sw.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        sw.set_vexpand(True)
 
-        # forum(str) | title(str) | link(str) [hidden] | date(str) | color(str) [hidden]
-        self._bm_store = Gtk.ListStore(str, str, str, str, str)
-        tv = Gtk.TreeView(model=self._bm_store)
-        tv.connect("row-activated", self._on_bm_activate)
-        tv.connect("key-press-event", self._on_bm_key)
-        tv.get_selection().set_mode(Gtk.SelectionMode.MULTIPLE)
-        self._bm_view = tv
+        # Master store mirrors self._bm_data; FilterListModel applies the text
+        # filter, SortListModel applies header-click sorting.
+        self._bm_store = Gio.ListStore(item_type=BookmarkItem)
+        self._bm_filter = Gtk.CustomFilter.new(self._bm_filter_fn)
+        filtered = Gtk.FilterListModel(model=self._bm_store, filter=self._bm_filter)
 
-        # Forum — fixed width, colored (foreground bound to col 4)
-        r = Gtk.CellRendererText()
-        r.set_property("ellipsize", Pango.EllipsizeMode.END)
-        r.set_property("weight", Pango.Weight.BOLD)
-        c = Gtk.TreeViewColumn(S["col_forum"], r, text=0, foreground=4)
-        c.set_sizing(Gtk.TreeViewColumnSizing.FIXED)
-        c.set_fixed_width(130)
-        tv.append_column(c)
-        self._col_bm_forum = c
-        # Title — expands
-        r = Gtk.CellRendererText()
-        r.set_property("ellipsize", Pango.EllipsizeMode.END)
-        r.set_property("weight", Pango.Weight.SEMIBOLD)
-        c = Gtk.TreeViewColumn(S["col_title"], r, text=1)
-        c.set_expand(True)
-        c.set_sizing(Gtk.TreeViewColumnSizing.AUTOSIZE)
-        tv.append_column(c)
-        # Date — fixed width (index 3; index 2 = link, hidden)
-        r = Gtk.CellRendererText()
-        c = Gtk.TreeViewColumn(S["col_date"], r, text=3)
-        c.set_sizing(Gtk.TreeViewColumnSizing.FIXED)
-        c.set_fixed_width(145)
-        tv.append_column(c)
-        self._col_bm_date = c
+        cv = Gtk.ColumnView()
+        cv.connect("activate", self._on_bm_activate)
+        self._bm_view = cv
 
-        # Sortable columns
-        self._col_bm_forum.set_sort_column_id(0)
-        self._col_bm_date.set_sort_column_id(3)
-        self._bm_store.set_sort_func(0, self._sort_bm_forum)
-        self._bm_store.set_sort_func(3, self._sort_bm_date)
-        self._bm_store.set_sort_column_id(3, Gtk.SortType.DESCENDING)
+        forum_sorter = Gtk.CustomSorter.new(self._cmp_bm_forum)
+        date_sorter  = Gtk.CustomSorter.new(self._cmp_bm_date)
 
-        sw.add(tv)
-        vbox.pack_start(sw, True, True, 0)
+        self._col_bm_forum = Gtk.ColumnViewColumn(
+            title=S["col_forum"],
+            factory=self._make_label_factory("forum", colored=True, bold=True))
+        self._col_bm_forum.set_fixed_width(130)
+        self._col_bm_forum.set_sorter(forum_sorter)
+        cv.append_column(self._col_bm_forum)
+
+        title_col = Gtk.ColumnViewColumn(
+            title=S["col_title"],
+            factory=self._make_label_factory("title", bold=True))
+        title_col.set_expand(True)
+        cv.append_column(title_col)
+
+        self._col_bm_date = Gtk.ColumnViewColumn(
+            title=S["col_date"],
+            factory=self._make_label_factory("date"))
+        self._col_bm_date.set_fixed_width(145)
+        self._col_bm_date.set_sorter(date_sorter)
+        cv.append_column(self._col_bm_date)
+
+        sort_model = Gtk.SortListModel(model=filtered, sorter=cv.get_sorter())
+        self._bm_selection = Gtk.MultiSelection(model=sort_model)
+        cv.set_model(self._bm_selection)
+        cv.sort_by_column(self._col_bm_date, Gtk.SortType.DESCENDING)
+        # key shortcuts (Delete / Return) wired in Step 5
+
+        sw.set_child(cv)
+        vbox.append(sw)
         self._load_bookmarks()
         return vbox
 
     # ── History tab ───────────────────────────────────────────────────────────
     def _build_hist_tab(self):
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        vbox.set_border_width(6)
+        vbox.set_margin_start(6)
+        vbox.set_margin_end(6)
+        vbox.set_margin_top(6)
+        vbox.set_margin_bottom(6)
 
         tb = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-        vbox.pack_start(tb, False, False, 0)
+        vbox.append(tb)
         for label, cb in [
             (S["hist_rerun"],  self._hist_rerun),
             (S["hist_clear"],  self._hist_clear),
         ]:
             btn = Gtk.Button(label=label)
             btn.connect("clicked", cb)
-            tb.pack_start(btn, False, False, 0)
+            tb.append(btn)
 
         sw = Gtk.ScrolledWindow()
         sw.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        sw.set_vexpand(True)
 
-        # time(str) | query(str)
-        self._hist_store = Gtk.ListStore(str, str)
-        tv = Gtk.TreeView(model=self._hist_store)
-        tv.connect("row-activated", self._on_hist_activate)
-        self._hist_view = tv
+        self._hist_store = Gio.ListStore(item_type=HistoryItem)
+        self._hist_selection = Gtk.SingleSelection(model=self._hist_store)
+        self._hist_selection.set_autoselect(False)
+        self._hist_selection.set_can_unselect(True)
 
-        self._col_hist_time = None
-        for i, (title, fixed_w, expands) in enumerate([
-            (S["col_time"],  160, False),
-            (S["col_query"], 0,   True),
-        ]):
-            r = Gtk.CellRendererText()
-            r.set_property("ellipsize", Pango.EllipsizeMode.END)
-            c = Gtk.TreeViewColumn(title, r, text=i)
-            if expands:
-                c.set_expand(True)
-                c.set_sizing(Gtk.TreeViewColumnSizing.AUTOSIZE)
-            else:
-                c.set_sizing(Gtk.TreeViewColumnSizing.FIXED)
-                c.set_fixed_width(fixed_w)
-                self._col_hist_time = c
-            tv.append_column(c)
+        cv = Gtk.ColumnView(model=self._hist_selection)
+        cv.connect("activate", self._on_hist_activate)
+        self._hist_view = cv
 
-        sw.add(tv)
-        vbox.pack_start(sw, True, True, 0)
+        self._col_hist_time = Gtk.ColumnViewColumn(
+            title=S["col_time"], factory=self._make_label_factory("time"))
+        self._col_hist_time.set_fixed_width(160)
+        cv.append_column(self._col_hist_time)
+
+        query_col = Gtk.ColumnViewColumn(
+            title=S["col_query"], factory=self._make_label_factory("query"))
+        query_col.set_expand(True)
+        cv.append_column(query_col)
+
+        sw.set_child(cv)
+        vbox.append(sw)
         self._load_history()
         return vbox
 
@@ -917,16 +945,12 @@ class ScoutWindow(Gtk.ApplicationWindow):
         return (da > db) - (da < db)
 
     @staticmethod
-    def _sort_bm_forum(model, iter_a, iter_b, _data):
-        a = model.get_value(iter_a, 0)
-        b = model.get_value(iter_b, 0)
-        return (a > b) - (a < b)
+    def _cmp_bm_forum(a, b, _data):
+        return (a.forum > b.forum) - (a.forum < b.forum)
 
     @staticmethod
-    def _sort_bm_date(model, iter_a, iter_b, _data):
-        a = model.get_value(iter_a, 3)
-        b = model.get_value(iter_b, 3)
-        return (a > b) - (a < b)
+    def _cmp_bm_date(a, b, _data):
+        return (a.date > b.date) - (a.date < b.date)
 
     # ── Result interactions ───────────────────────────────────────────────────
     def _on_result_activate(self, _cv, position):
@@ -1072,32 +1096,38 @@ class ScoutWindow(Gtk.ApplicationWindow):
         self._set_status(S["bm_added"].format(title))
 
     def _mark_result_bookmarked(self, link: str):
-        it = self._res_store.get_iter_first()
-        while it:
-            if self._res_store.get_value(it, 4) == link:
-                self._res_store.set_value(it, 0, "★")
-            it = self._res_store.iter_next(it)
+        self._set_result_marker(link, "★")
 
     def _mark_result_unbookmarked(self, link: str):
-        it = self._res_store.get_iter_first()
-        while it:
-            if self._res_store.get_value(it, 4) == link:
-                self._res_store.set_value(it, 0, "")
-            it = self._res_store.iter_next(it)
+        self._set_result_marker(link, "")
+
+    def _set_result_marker(self, link: str, marker: str):
+        for i in range(self._res_store.get_n_items()):
+            item = self._res_store.get_item(i)
+            if item.link == link and item.marker != marker:
+                item.marker = marker
+                self._res_store.items_changed(i, 1, 1)  # force the cell to rebind
 
     def _bookmarked_urls(self) -> set:
         return {row[2] for row in self._bm_data}
 
     def _bm_refresh(self):
+        # rebuild the master store from _bm_data; the text filter is applied by
+        # the FilterListModel layer, not here
+        self._bm_store.remove_all()
+        for forum, title, link, date, color in self._bm_data:
+            self._bm_store.append(BookmarkItem(forum, title, link, date, color))
+
+    def _bm_filter_fn(self, item, _user_data=None):
         text = self._bm_filter_entry.get_text().strip().lower()
-        self._bm_store.clear()
-        for row in self._bm_data:
-            forum, title, link, date, color = row
-            if not text or text in forum.lower() or text in title.lower() or text in link.lower():
-                self._bm_store.append(row)
+        if not text:
+            return True
+        return (text in item.forum.lower()
+                or text in item.title.lower()
+                or text in item.link.lower())
 
     def _on_bm_filter_changed(self, _entry):
-        self._bm_refresh()
+        self._bm_filter.changed(Gtk.FilterChange.DIFFERENT)
 
     def _load_bookmarks(self):
         self._bm_data = []
@@ -1127,29 +1157,47 @@ class ScoutWindow(Gtk.ApplicationWindow):
                     pass
         self._bm_refresh()
 
+    def _write_bookmarks(self):
+        with open(BOOKMARK_FILE, "w") as fh:
+            for f, t, l, d, _ in self._bm_data:
+                fh.write(f"[{f}] {t} - {l}|||{d}\n")
+
+    @staticmethod
+    def _selected_items(selection):
+        bitset = selection.get_selection()
+        return [selection.get_item(bitset.get_nth(i)) for i in range(bitset.get_size())]
+
+    def _confirm(self, message, ok_label, on_ok):
+        """Async yes/no confirmation (GTK4 has no blocking dialog.run())."""
+        dlg = Gtk.AlertDialog()
+        dlg.set_modal(True)
+        dlg.set_message(message)
+        dlg.set_buttons(["Cancel", ok_label])
+        dlg.set_cancel_button(0)
+        dlg.set_default_button(1)
+
+        def on_choice(d, res):
+            try:
+                if d.choose_finish(res) == 1:
+                    on_ok()
+            except GLib.Error:
+                pass   # dismissed
+
+        dlg.choose(self, None, on_choice)
+
     def _bm_open(self, *_):
-        model, paths = self._bm_view.get_selection().get_selected_rows()
-        links = [model.get_value(model.get_iter(p), 2) for p in paths]
+        links = [it.link for it in self._selected_items(self._bm_selection) if it.link]
         if not links:
             return
         if len(links) > 15:
-            dlg = Gtk.MessageDialog(
-                transient_for=self, flags=0,
-                message_type=Gtk.MessageType.QUESTION,
-                buttons=Gtk.ButtonsType.OK_CANCEL,
-                text=f"Open {len(links)} tabs in your browser?",
-            )
-            dlg.set_default_response(Gtk.ResponseType.CANCEL)
-            response = dlg.run()
-            dlg.destroy()
-            if response != Gtk.ResponseType.OK:
-                return
+            self._confirm(f"Open {len(links)} tabs in your browser?", "Open",
+                          lambda: [self._open_url(u) for u in links])
+            return
         for url in links:
             self._open_url(url)
 
     def _bm_copy(self, *_):
-        model, paths = self._bm_view.get_selection().get_selected_rows()
-        links = [model.get_value(model.get_iter(p), 2) for p in paths]
+        links = [it.link for it in self._selected_items(self._bm_selection) if it.link]
         if links:
             self._copy("\n".join(links))
 
@@ -1158,41 +1206,55 @@ class ScoutWindow(Gtk.ApplicationWindow):
         if not links:
             return
         if len(links) > 5 and self._bm_bulk_confirm:
-            dlg = Gtk.MessageDialog(
-                transient_for=self,
-                flags=0,
-                message_type=Gtk.MessageType.WARNING,
-                buttons=Gtk.ButtonsType.CANCEL,
-                text=f"Delete {len(links)} bookmarks?",
-            )
-            dlg.add_button("Delete", Gtk.ResponseType.OK)
-            dlg.set_default_response(Gtk.ResponseType.CANCEL)
-            chk = Gtk.CheckButton(label="Don't ask again")
-            chk.show()
-            dlg.get_message_area().pack_start(chk, False, False, 0)
-            response = dlg.run()
+            self._confirm_bulk_delete(links)
+            return
+        self._do_bm_remove(links)
+
+    def _confirm_bulk_delete(self, links):
+        dlg = Gtk.Window(title="Confirm delete", modal=True, transient_for=self)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        box.set_margin_top(16); box.set_margin_bottom(16)
+        box.set_margin_start(16); box.set_margin_end(16)
+        box.append(Gtk.Label(label=f"Delete {len(links)} bookmarks?", xalign=0))
+        chk = Gtk.CheckButton(label="Don't ask again")
+        box.append(chk)
+        btns = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8,
+                       halign=Gtk.Align.END)
+        cancel = Gtk.Button(label="Cancel")
+        delete = Gtk.Button(label="Delete")
+        delete.add_css_class("destructive-action")
+        btns.append(cancel)
+        btns.append(delete)
+        box.append(btns)
+        dlg.set_child(box)
+        cancel.connect("clicked", lambda *_: dlg.destroy())
+
+        def do_delete(*_):
             if chk.get_active():
                 self._bm_bulk_confirm = False
                 self._save_settings()
             dlg.destroy()
-            if response != Gtk.ResponseType.OK:
-                return
+            self._do_bm_remove(links)
+
+        delete.connect("clicked", do_delete)
+        dlg.present()
+
+    def _do_bm_remove(self, links):
         self._bm_undo_data = [r for r in self._bm_data if r[2] in links]
-        self._bm_data = [r for r in self._bm_data if r[2] not in links]
+        self._bm_data      = [r for r in self._bm_data if r[2] not in links]
         self._bm_refresh()
-        with open(BOOKMARK_FILE, "w") as fh:
-            for f, t, l, d, _ in self._bm_data:
-                fh.write(f"[{f}] {t} - {l}|||{d}\n")
+        for link in links:
+            self._mark_result_unbookmarked(link)
+        self._write_bookmarks()
         self._set_status(S["bm_removed"])
-        self._undo_btn.show()
+        if hasattr(self, "_undo_btn"):
+            self._undo_btn.set_visible(True)   # undo button built in Step 6
 
     def _bm_remove_by_link(self, link: str):
         self._bm_data = [r for r in self._bm_data if r[2] != link]
         self._bm_refresh()
         self._mark_result_unbookmarked(link)
-        with open(BOOKMARK_FILE, "w") as fh:
-            for f, t, l, d, _ in self._bm_data:
-                fh.write(f"[{f}] {t} - {l}|||{d}\n")
+        self._write_bookmarks()
         self._set_status(S["bm_removed"])
 
     def _bm_undo(self, *_):
@@ -1201,48 +1263,30 @@ class ScoutWindow(Gtk.ApplicationWindow):
         self._bm_data.extend(self._bm_undo_data)
         self._bm_undo_data = []
         self._bm_refresh()
-        with open(BOOKMARK_FILE, "w") as fh:
-            for f, t, l, d, _ in self._bm_data:
-                fh.write(f"[{f}] {t} - {l}|||{d}\n")
-        self._undo_btn.hide()
+        self._write_bookmarks()
+        if hasattr(self, "_undo_btn"):
+            self._undo_btn.set_visible(False)
         self._set_status("Undo: bookmark(s) restored.")
 
     def _bm_selected_links(self) -> set:
-        sel = self._bm_view.get_selection()
-        model, paths = sel.get_selected_rows()
-        return {model.get_value(model.get_iter(p), 2) for p in paths}
+        return {it.link for it in self._selected_items(self._bm_selection)}
 
-    def _bm_selected(self):
-        _, it = self._bm_view.get_selection().get_selected()
-        return it
-
-    def _on_bm_key(self, _widget, event):
-        if event.keyval == Gdk.KEY_Delete:
-            self._bm_remove()
-            return True
-        if event.keyval == Gdk.KEY_Return:
-            _, paths = self._bm_view.get_selection().get_selected_rows()
-            if len(paths) > 1:
-                self._bm_open()
-                return True
-        return False
-
-    def _on_bm_activate(self, _view, path, _col):
-        it = self._bm_store.get_iter(path)
-        self._open_url(self._bm_store.get_value(it, 2))
+    def _on_bm_activate(self, _cv, position):
+        item = self._bm_selection.get_item(position)
+        if item is not None:
+            self._open_url(item.link)
 
     # ── History ───────────────────────────────────────────────────────────────
     def _log_history(self, query: str):
         ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with open(HISTORY_FILE, "a") as f:
             f.write(f"{ts} - {query}\n")
-        if hasattr(self, "_hist_store"):
-            self._hist_store.prepend([ts, query])   # history tab built in Step 4
+        self._hist_store.insert(0, HistoryItem(ts, query))   # newest at top
         if hasattr(self, "_completion_store"):
             self._completion_add(query)             # completion built in Step 5
 
     def _load_history(self):
-        self._hist_store.clear()
+        self._hist_store.remove_all()
         if not os.path.exists(HISTORY_FILE):
             return
         rows = []
@@ -1253,39 +1297,39 @@ class ScoutWindow(Gtk.ApplicationWindow):
                     continue
                 try:
                     ts, query = line.split(" - ", 1)
-                    rows.append([ts, query])
+                    rows.append((ts, query))
                 except Exception:
                     pass
         # reverse so newest appears first
-        for row in reversed(rows):
-            self._hist_store.append(row)
+        for ts, query in reversed(rows):
+            self._hist_store.append(HistoryItem(ts, query))
 
     def _hist_rerun(self, *_):
-        _, it = self._hist_view.get_selection().get_selected()
-        if it:
-            query = self._hist_store.get_value(it, 1)
-            self._entry.set_text(query)
+        item = self._hist_selection.get_selected_item()
+        if item is not None:
+            self._entry.set_text(item.query)
             self._on_search()
             self._notebook.set_current_page(0)
 
     def _hist_clear(self, *_):
-        self._hist_store.clear()
+        self._hist_store.remove_all()
         open(HISTORY_FILE, "w").close()
-        # Reset completion to seeds only
-        self._completion_store.clear()
-        self._completion_seen.clear()
-        for term in _SEED_TERMS:
-            key = term.lower()
-            if key not in self._completion_seen:
-                self._completion_seen.add(key)
-                self._completion_store.append([term])
+        # Reset completion to seeds only (completion built in Step 5)
+        if hasattr(self, "_completion_store"):
+            self._completion_store.clear()
+            self._completion_seen.clear()
+            for term in _SEED_TERMS:
+                key = term.lower()
+                if key not in self._completion_seen:
+                    self._completion_seen.add(key)
+                    self._completion_store.append([term])
 
-    def _on_hist_activate(self, _view, path, _col):
-        it = self._hist_store.get_iter(path)
-        query = self._hist_store.get_value(it, 1)
-        self._entry.set_text(query)
-        self._on_search()
-        self._notebook.set_current_page(0)
+    def _on_hist_activate(self, _cv, position):
+        item = self._hist_selection.get_item(position)
+        if item is not None:
+            self._entry.set_text(item.query)
+            self._on_search()
+            self._notebook.set_current_page(0)
 
     # ── Autocomplete ──────────────────────────────────────────────────────────
     def _build_completion(self) -> Gtk.EntryCompletion:
@@ -1577,9 +1621,7 @@ class ScoutWindow(Gtk.ApplicationWindow):
 
     @staticmethod
     def _copy(text: str):
-        cb = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
-        cb.set_text(text, -1)
-        cb.store()
+        Gdk.Display.get_default().get_clipboard().set(text)
 
 
 # ─── Entry point ──────────────────────────────────────────────────────────────
