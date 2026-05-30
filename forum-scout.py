@@ -730,7 +730,7 @@ class ScoutWindow(Gtk.ApplicationWindow):
         self._col_res_forum = _column(S["col_forum"], _factory("forum", colored=True), fixed_w=150,
                                       sorter=forum_sorter)
         _column(S["col_title"], _factory("title", bold=True), expand=True)
-        self._col_res_date  = _column(S["col_date"],  _factory("date"),                fixed_w=100,
+        self._col_res_date  = _column(S["col_date"],  _factory("date"),                fixed_w=89,
                                       sorter=date_sorter)
         _column("✓", self._make_solved_factory(), fixed_w=28)
 
@@ -804,7 +804,7 @@ class ScoutWindow(Gtk.ApplicationWindow):
         self._col_bm_date = Gtk.ColumnViewColumn(
             title=S["col_date"],
             factory=self._make_label_factory("date"))
-        self._col_bm_date.set_fixed_width(145)
+        self._col_bm_date.set_fixed_width(89)
         self._col_bm_date.set_sorter(date_sorter)
         cv.append_column(self._col_bm_date)
 
@@ -1084,6 +1084,23 @@ class ScoutWindow(Gtk.ApplicationWindow):
             action.connect("activate", cb)
             self.add_action(action)
 
+        # Right-click context menu on bookmarks
+        bm_rclick = Gtk.GestureClick(button=3)
+        bm_rclick.connect("pressed", self._on_bm_rclick)
+        self._bm_view.add_controller(bm_rclick)
+
+        self._bm_menu = Gtk.PopoverMenu()
+        self._bm_menu.set_parent(self._bm_view)
+        self._bm_menu.set_has_arrow(False)
+
+        for name, cb in [
+            ("bm-open",   self._act_bm_open),
+            ("bm-remove", self._act_bm_remove),
+        ]:
+            action = Gio.SimpleAction.new(name, None)
+            action.connect("activate", cb)
+            self.add_action(action)
+
         # Delete / Return on the bookmarks list
         bm_keys = Gtk.EventControllerKey()
         bm_keys.connect("key-pressed", self._on_bm_key)
@@ -1121,6 +1138,24 @@ class ScoutWindow(Gtk.ApplicationWindow):
         self._res_menu.set_pointing_to(rect)
         self._res_menu.popup()
 
+    def _on_bm_rclick(self, _gesture, _n_press, x, y):
+        items = self._selected_items(self._bm_selection)
+        if not items:
+            return
+        menu = Gio.Menu()
+        n = len(items)
+        if n == 1:
+            menu.append(S["ctx_open"],      "win.bm-open")
+            menu.append(S["ctx_bm_remove"], "win.bm-remove")
+        else:
+            menu.append(f"Open {n} in browser",    "win.bm-open")
+            menu.append(f"Remove {n} bookmark(s)", "win.bm-remove")
+        self._bm_menu.set_menu_model(menu)
+        rect = Gdk.Rectangle()
+        rect.x, rect.y, rect.width, rect.height = int(x), int(y), 1, 1
+        self._bm_menu.set_pointing_to(rect)
+        self._bm_menu.popup()
+
     # context-menu actions operate on the current results selection
     def _act_res_open(self, *_):
         self._open_results_multi(self._selected_items(self._res_selection))
@@ -1135,6 +1170,12 @@ class ScoutWindow(Gtk.ApplicationWindow):
 
     def _act_res_unbookmark(self, *_):
         self._unbookmark_results_multi(self._selected_items(self._res_selection))
+
+    def _act_bm_open(self, *_):
+        self._bm_open()
+
+    def _act_bm_remove(self, *_):
+        self._bm_remove()
 
     def _open_results_multi(self, items):
         self._open_url_list([it.link for it in items if it.link])
@@ -1164,7 +1205,7 @@ class ScoutWindow(Gtk.ApplicationWindow):
 
     # ── Bookmarks ─────────────────────────────────────────────────────────────
     def _add_bookmark(self, forum: str, title: str, link: str, solved: str = ""):
-        date  = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+        date  = datetime.datetime.now().strftime("%Y-%m-%d")
         color = _FORUM_COLOR.get(forum, "#cdd6f4")
         with open(BOOKMARK_FILE, "a") as f:
             f.write(f"[{forum}] {title} - {link}|||{date}|||{solved}\n")
@@ -1223,7 +1264,7 @@ class ScoutWindow(Gtk.ApplicationWindow):
                     rest  = line.split("] ", 1)[1]
                     parts = rest.split("|||")
                     body  = parts[0]
-                    date  = parts[1] if len(parts) > 1 else ""
+                    date  = (parts[1].strip().split()[0] if len(parts) > 1 else "")
                     solved = parts[2] if len(parts) > 2 else ""
                     cut = body.rfind(" - http")
                     if cut == -1:
