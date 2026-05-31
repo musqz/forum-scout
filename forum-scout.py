@@ -16,6 +16,7 @@ import subprocess
 import datetime
 import urllib.parse
 import locale
+import re
 from html.parser import HTMLParser
 
 try:
@@ -120,6 +121,9 @@ _EN_STRINGS = {
     "hist_clear":  "Clear history",
     "via_ddg":     " ⁽ᴰᴰᴳ⁾",
     "col_date":    "Added",
+    "col_created": "Created",
+    "col_last":    "Last reply",
+    "bm_refresh":  "Refresh",
 }
 
 def _load_translation(lang: str) -> dict:
@@ -209,7 +213,7 @@ class _ForumUnreachable(Exception):
 _NET_ERRORS = (requests.ConnectionError, requests.Timeout, requests.exceptions.SSLError)
 
 
-def _fetch_discourse(forum: dict, query: str, hits: int) -> list[tuple[str, str, str, bool]]:
+def _fetch_discourse(forum: dict, query: str, hits: int) -> list[tuple[str, str, str, str, bool]]:
     url = f"{forum['url']}/search.json"
     try:
         r = _session.get(url, params={"q": query}, timeout=9)
@@ -219,8 +223,9 @@ def _fetch_discourse(forum: dict, query: str, hits: int) -> list[tuple[str, str,
         for t in data.get("topics", [])[:hits]:
             link   = f"{base}/t/{t['slug']}/{t['id']}"
             date   = _fmt_date(t.get("created_at", ""))
-            solved = bool(t.get("has_accepted_answer", False))
-            out.append((t["title"], link, date, solved))
+            solved        = bool(t.get("has_accepted_answer", False))
+            last_activity = _fmt_date(t.get("last_posted_at", ""))
+            out.append((t["title"], link, date, last_activity, solved))
         return out
     except _NET_ERRORS:
         raise _ForumUnreachable
@@ -228,7 +233,7 @@ def _fetch_discourse(forum: dict, query: str, hits: int) -> list[tuple[str, str,
         return []
 
 
-def _fetch_mediawiki(forum: dict, query: str, hits: int) -> list[tuple[str, str, str, bool]]:
+def _fetch_mediawiki(forum: dict, query: str, hits: int) -> list[tuple[str, str, str, str, bool]]:
     try:
         r = _session.get(
             f"{forum['url']}/api.php",
@@ -248,7 +253,7 @@ def _fetch_mediawiki(forum: dict, query: str, hits: int) -> list[tuple[str, str,
         for item in data.get("query", {}).get("search", []):
             slug = urllib.parse.quote(item["title"].replace(" ", "_"))
             date = _fmt_date(item.get("timestamp", ""))
-            out.append((item["title"], f"{base}/{page_tpl.format(slug=slug)}", date, False))
+            out.append((item["title"], f"{base}/{page_tpl.format(slug=slug)}", date, "", False))
         return out
     except _NET_ERRORS:
         raise _ForumUnreachable
@@ -256,7 +261,7 @@ def _fetch_mediawiki(forum: dict, query: str, hits: int) -> list[tuple[str, str,
         return []
 
 
-def _fetch_ddg(forum: dict, query: str, hits: int) -> list[tuple[str, str, str, bool]]:
+def _fetch_ddg(forum: dict, query: str, hits: int) -> list[tuple[str, str, str, str, bool]]:
     site = forum["url"]
     try:
         r = requests.get(
@@ -270,7 +275,7 @@ def _fetch_ddg(forum: dict, query: str, hits: int) -> list[tuple[str, str, str, 
         out = []
         for title, link in parser.results:
             if site in link:
-                out.append((title, link, "—", False))   # DDG returns no date
+                out.append((title, link, "—", "", False))   # DDG returns no date
                 if len(out) >= hits:
                     break
         return out
@@ -334,6 +339,13 @@ _SUGGESTERS = {
 # Forum name → color, used for consistent coloring across all tabs
 _FORUM_COLOR: dict[str, str] = {f["name"]: f["color"] for f in FORUMS}
 
+_DISC_ID_RE = re.compile(r'(https?://[^/]+/t/)[^/]+/(\d+)')
+
+def _disc_key(url: str) -> str:
+    """Normalize a Discourse topic URL to base+id, ignoring the slug."""
+    m = _DISC_ID_RE.match(url)
+    return f"{m.group(1)}{m.group(2)}" if m else url
+
 # ─── Autocomplete seed terms ──────────────────────────────────────────────────
 # Common Linux forum search topics shown to new users before history builds up
 _SEED_TERMS = [
@@ -381,28 +393,30 @@ class ResultItem(GObject.Object):
     marker = GObject.Property(type=str, default="")
     solved = GObject.Property(type=str, default="")
 
-    def __init__(self, marker, forum, color, title, link, date, solved=""):
+    def __init__(self, marker, forum, color, title, link, date, last_activity="", solved=""):
         super().__init__()
-        self.marker = marker   # "★" when the URL is bookmarked, else ""
-        self.forum  = forum    # display name (may carry the via-DDG suffix)
-        self.color  = color
-        self.title  = title
-        self.link   = link
-        self.date   = date
-        self.solved = solved
+        self.marker        = marker   # "★" when the URL is bookmarked, else ""
+        self.forum         = forum    # display name (may carry the via-DDG suffix)
+        self.color         = color
+        self.title         = title
+        self.link          = link
+        self.date          = date
+        self.last_activity = last_activity
+        self.solved        = solved
 
 
 class BookmarkItem(GObject.Object):
     __gtype_name__ = "BookmarkItem"
 
-    def __init__(self, forum, title, link, date, color, solved=""):
+    def __init__(self, forum, title, link, date, color, solved="", last_activity=""):
         super().__init__()
-        self.forum  = forum
-        self.title  = title
-        self.link   = link
-        self.date   = date
-        self.color  = color
-        self.solved = solved
+        self.forum         = forum
+        self.title         = title
+        self.link          = link
+        self.date          = date
+        self.color         = color
+        self.solved        = solved
+        self.last_activity = last_activity
 
 
 class HistoryItem(GObject.Object):
@@ -432,6 +446,9 @@ class ScoutWindow(Gtk.ApplicationWindow):
         self._forums_bar_visible = True
         self._bm_bulk_confirm    = True
         self._bm_undo_data       = []
+        self._bm_refreshing      = False
+        self._bm_refresh_total   = 0
+        self._bm_refresh_done    = 0
 
         self._build_ui()
         self._load_settings()           # apply persisted prefs after widgets exist
@@ -589,6 +606,7 @@ class ScoutWindow(Gtk.ApplicationWindow):
             ("Ctrl+B",      "Bookmark / un-bookmark selected result(s)"),
             ("Del",         "Delete selected bookmark(s)"),
             ("Ctrl+Z",      "Undo last bookmark delete"),
+            ("Ctrl+R",      "Refresh bookmark activity"),
             ("Ctrl+Tab",    "Switch tabs"),
             ("?",           "Show this help"),
         )):
@@ -698,6 +716,35 @@ class ScoutWindow(Gtk.ApplicationWindow):
         factory.connect("unbind", on_unbind)
         return factory
 
+    @staticmethod
+    def _make_bm_added_factory():
+        factory = Gtk.SignalListItemFactory()
+
+        def on_setup(_f, li):
+            lbl = Gtk.Label(xalign=0)
+            lbl.set_use_markup(True)
+            li.set_child(lbl)
+
+        def on_bind(_f, li):
+            item = li.get_item()
+            text = item.date if item else ""
+            parts = text.split(" ", 1)
+            today = datetime.date.today().isoformat()
+            if len(parts) == 2 and parts[0] == today:
+                escaped = GLib.markup_escape_text(parts[1])
+                markup = f'<span foreground="#fb8c00">{escaped}</span>'
+            else:
+                markup = GLib.markup_escape_text(parts[0] if parts else text)
+            li.get_child().set_markup(markup)
+
+        def on_unbind(_f, li):
+            li.get_child().set_markup("")
+
+        factory.connect("setup",  on_setup)
+        factory.connect("bind",   on_bind)
+        factory.connect("unbind", on_unbind)
+        return factory
+
     # ── Results tab ───────────────────────────────────────────────────────────
     def _build_results_tab(self):
         sw = Gtk.ScrolledWindow()
@@ -724,14 +771,17 @@ class ScoutWindow(Gtk.ApplicationWindow):
             return col
 
         forum_sorter = Gtk.CustomSorter.new(self._cmp_forum)
-        date_sorter  = Gtk.CustomSorter.new(self._cmp_date)
+        created_sorter = Gtk.CustomSorter.new(self._cmp_date)
+        last_sorter    = Gtk.CustomSorter.new(self._cmp_last)
 
         self._col_res_n     = _column(S["col_n"],     _factory("marker", bind=True),   fixed_w=28)
         self._col_res_forum = _column(S["col_forum"], _factory("forum", colored=True), fixed_w=150,
                                       sorter=forum_sorter)
         _column(S["col_title"], _factory("title", bold=True), expand=True)
-        self._col_res_date  = _column(S["col_date"],  _factory("date"),                fixed_w=89,
-                                      sorter=date_sorter)
+        self._col_res_created = _column(S["col_created"], _factory("date"),            fixed_w=89,
+                                        sorter=created_sorter)
+        self._col_res_last    = _column(S["col_last"],    _factory("last_activity"),   fixed_w=89,
+                                        sorter=last_sorter)
         _column("✓", self._make_solved_factory(), fixed_w=28)
 
         # Sorting only applies when the data flows through a SortListModel driven
@@ -739,7 +789,7 @@ class ScoutWindow(Gtk.ApplicationWindow):
         sort_model = Gtk.SortListModel(model=self._res_store, sorter=cv.get_sorter())
         self._res_selection = Gtk.MultiSelection(model=sort_model)
         cv.set_model(self._res_selection)
-        cv.sort_by_column(self._col_res_date, Gtk.SortType.DESCENDING)  # default: newest first
+        cv.sort_by_column(self._col_res_created, Gtk.SortType.DESCENDING)  # default: newest first
 
         sw.set_child(cv)
         return sw
@@ -770,6 +820,11 @@ class ScoutWindow(Gtk.ApplicationWindow):
             btn = Gtk.Button(label=label)
             btn.connect("clicked", cb)
             tb.append(btn)
+
+        self._bm_refresh_btn = Gtk.Button(label=S["bm_refresh"])
+        self._bm_refresh_btn.set_tooltip_text("Refresh last activity (Ctrl+R)")
+        self._bm_refresh_btn.connect("clicked", self._bm_refresh_activity)
+        tb.append(self._bm_refresh_btn)
 
         sw = Gtk.ScrolledWindow()
         sw.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
@@ -803,10 +858,18 @@ class ScoutWindow(Gtk.ApplicationWindow):
 
         self._col_bm_date = Gtk.ColumnViewColumn(
             title=S["col_date"],
-            factory=self._make_label_factory("date"))
+            factory=self._make_bm_added_factory())
         self._col_bm_date.set_fixed_width(89)
         self._col_bm_date.set_sorter(date_sorter)
         cv.append_column(self._col_bm_date)
+
+        last_sorter_bm = Gtk.CustomSorter.new(self._cmp_bm_last)
+        self._col_bm_last = Gtk.ColumnViewColumn(
+            title=S["col_last"],
+            factory=self._make_label_factory("last_activity"))
+        self._col_bm_last.set_fixed_width(89)
+        self._col_bm_last.set_sorter(last_sorter_bm)
+        cv.append_column(self._col_bm_last)
 
         solved_col = Gtk.ColumnViewColumn(title="✓", factory=self._make_solved_factory())
         solved_col.set_fixed_width(28)
@@ -820,6 +883,7 @@ class ScoutWindow(Gtk.ApplicationWindow):
         sw.set_child(cv)
         vbox.append(sw)
         self._load_bookmarks()
+        GLib.idle_add(self._bm_refresh_activity)
         return vbox
 
     # ── History tab ───────────────────────────────────────────────────────────
@@ -987,20 +1051,20 @@ class ScoutWindow(Gtk.ApplicationWindow):
             unreachable = forum["name"]
         via_ddg = forum["type"] == "ddg"
         results = [
-            (forum["name"], forum["color"], title, link, date, via_ddg, solved)
-            for title, link, date, solved in items
+            (forum["name"], forum["color"], title, link, date, last_activity, via_ddg, solved)
+            for title, link, date, last_activity, solved in items
         ]
         ddg_empty = forum["name"] if via_ddg and not items and not unreachable else None
         GLib.idle_add(self._add_forum_results, results, ddg_empty, unreachable)
 
     def _add_forum_results(self, new_results: list, ddg_empty_name, unreachable_name):
-        for forum, color, title, link, date, via_ddg, solved in new_results:
+        for forum, color, title, link, date, last_activity, via_ddg, solved in new_results:
             self._search_idx += 1
             display       = forum + (S["via_ddg"] if via_ddg else "")
-            marker        = "★" if link in self._bm_urls else ""
+            marker        = "★" if _disc_key(link) in self._bm_urls else ""
             solved_marker = "✓" if solved else ""
-            self._res_store.append(ResultItem(marker, display, color, title, link, date, solved_marker))
-            self._results.append((self._search_idx, forum, color, title, link, date, via_ddg, solved))
+            self._res_store.append(ResultItem(marker, display, color, title, link, date, last_activity, solved_marker))
+            self._results.append((self._search_idx, forum, color, title, link, date, last_activity, via_ddg, solved))
 
         if ddg_empty_name:
             self._ddg_empty.append(ddg_empty_name)
@@ -1050,6 +1114,18 @@ class ScoutWindow(Gtk.ApplicationWindow):
     @staticmethod
     def _cmp_bm_date(a, b, _data):
         return (a.date > b.date) - (a.date < b.date)
+
+    @staticmethod
+    def _cmp_last(a, b, _data):
+        da = "0000-00-00" if a.last_activity in ("—", "") else a.last_activity
+        db = "0000-00-00" if b.last_activity in ("—", "") else b.last_activity
+        return (da > db) - (da < db)
+
+    @staticmethod
+    def _cmp_bm_last(a, b, _data):
+        da = "0000-00-00" if a.last_activity in ("—", "") else a.last_activity
+        db = "0000-00-00" if b.last_activity in ("—", "") else b.last_activity
+        return (da > db) - (da < db)
 
     # ── Result interactions ───────────────────────────────────────────────────
     def _on_result_activate(self, _cv, position):
@@ -1117,15 +1193,15 @@ class ScoutWindow(Gtk.ApplicationWindow):
             it = items[0]
             menu.append(S["ctx_open"], "win.res-open")
             menu.append(S["ctx_copy"], "win.res-copy")
-            if it.link in self._bookmarked_urls():
+            if _disc_key(it.link) in self._bookmarked_urls():
                 menu.append(S["ctx_bm_remove"], "win.res-unbookmark")
             else:
                 menu.append(S["ctx_bm"], "win.res-bookmark")
         else:
             n       = len(items)
             bm_urls = self._bookmarked_urls()
-            n_add   = sum(1 for it in items if it.link and it.link not in bm_urls)
-            n_rem   = sum(1 for it in items if it.link in bm_urls)
+            n_add   = sum(1 for it in items if it.link and _disc_key(it.link) not in bm_urls)
+            n_rem   = sum(1 for it in items if it.link and _disc_key(it.link) in bm_urls)
             menu.append(f"Open {n} in browser", "win.res-open")
             if n_add:
                 menu.append(f"Add {n_add} to bookmarks", "win.res-bookmark")
@@ -1184,19 +1260,20 @@ class ScoutWindow(Gtk.ApplicationWindow):
         bm_urls = self._bookmarked_urls()
         added = 0
         for it in items:
-            if not it.link or it.link in bm_urls:
+            if not it.link or _disc_key(it.link) in bm_urls:
                 continue
             self._add_bookmark(it.forum, it.title, it.link, it.solved)
-            bm_urls.add(it.link)
+            bm_urls.add(_disc_key(it.link))
             added += 1
         if added:
             self._set_status(f"{added} bookmark(s) added.")
 
     def _unbookmark_results_multi(self, items):
-        to_remove = self._bookmarked_urls() & {it.link for it in items if it.link}
+        keys = {_disc_key(it.link) for it in items if it.link}
+        to_remove = [bm[2] for bm in self._bm_data if _disc_key(bm[2]) in keys]
         if not to_remove:
             return
-        self._bm_data = [bm for bm in self._bm_data if bm[2] not in to_remove]
+        self._bm_data = [bm for bm in self._bm_data if _disc_key(bm[2]) not in keys]
         self._bm_refresh()
         for link in to_remove:
             self._mark_result_unbookmarked(link)
@@ -1205,11 +1282,11 @@ class ScoutWindow(Gtk.ApplicationWindow):
 
     # ── Bookmarks ─────────────────────────────────────────────────────────────
     def _add_bookmark(self, forum: str, title: str, link: str, solved: str = ""):
-        date  = datetime.datetime.now().strftime("%Y-%m-%d")
+        date  = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
         color = _FORUM_COLOR.get(forum, "#cdd6f4")
         with open(BOOKMARK_FILE, "a") as f:
-            f.write(f"[{forum}] {title} - {link}|||{date}|||{solved}\n")
-        self._bm_data.append([forum, title, link, date, color, solved])
+            f.write(f"[{forum}] {title} - {link}|||{date}|||{solved}|||\n")
+        self._bm_data.append([forum, title, link, date, color, solved, ""])
         self._bm_refresh()
         self._mark_result_bookmarked(link)
         self._set_status(S["bm_added"].format(title))
@@ -1225,18 +1302,18 @@ class ScoutWindow(Gtk.ApplicationWindow):
         # updates the ★ column live (no items_changed / re-sort needed)
         for i in range(self._res_store.get_n_items()):
             item = self._res_store.get_item(i)
-            if item.link == link:
+            if _disc_key(item.link) == _disc_key(link):
                 item.marker = marker
 
     def _bookmarked_urls(self) -> set:
-        return {row[2] for row in self._bm_data}
+        return {_disc_key(row[2]) for row in self._bm_data}
 
     def _bm_refresh(self):
         # rebuild the master store from _bm_data; the text filter is applied by
         # the FilterListModel layer, not here
         self._bm_store.remove_all()
-        for forum, title, link, date, color, solved in self._bm_data:
-            self._bm_store.append(BookmarkItem(forum, title, link, date, color, solved))
+        for forum, title, link, date, color, solved, last_activity in self._bm_data:
+            self._bm_store.append(BookmarkItem(forum, title, link, date, color, solved, last_activity))
 
     def _bm_filter_fn(self, item, _user_data=None):
         text = self._bm_filter_entry.get_text().strip().lower()
@@ -1264,23 +1341,24 @@ class ScoutWindow(Gtk.ApplicationWindow):
                     rest  = line.split("] ", 1)[1]
                     parts = rest.split("|||")
                     body  = parts[0]
-                    date  = (parts[1].strip().split()[0] if len(parts) > 1 else "")
-                    solved = parts[2] if len(parts) > 2 else ""
+                    date          = (parts[1].strip() if len(parts) > 1 else "")
+                    solved        = parts[2].strip() if len(parts) > 2 else ""
+                    last_activity = parts[3].strip() if len(parts) > 3 else ""
                     cut = body.rfind(" - http")
                     if cut == -1:
                         cut = body.rfind(" - ")
                     title = body[:cut]
                     link  = body[cut + 3:]
                     color = _FORUM_COLOR.get(forum, "#cdd6f4")
-                    self._bm_data.append([forum, title, link, date, color, solved])
+                    self._bm_data.append([forum, title, link, date, color, solved, last_activity])
                 except Exception:
                     pass
         self._bm_refresh()
 
     def _write_bookmarks(self):
         with open(BOOKMARK_FILE, "w") as fh:
-            for f, t, l, d, _, s in self._bm_data:
-                fh.write(f"[{f}] {t} - {l}|||{d}|||{s}\n")
+            for f, t, l, d, _, s, la in self._bm_data:
+                fh.write(f"[{f}] {t} - {l}|||{d}|||{s}|||{la}\n")
 
     @staticmethod
     def _selected_items(selection):
@@ -1388,6 +1466,63 @@ class ScoutWindow(Gtk.ApplicationWindow):
         self._write_bookmarks()
         self._undo_btn.set_visible(False)
         self._set_status("Undo: bookmark(s) restored.")
+
+    def _bm_refresh_activity(self, *_):
+        if self._bm_refreshing:
+            return
+        targets = [
+            bm for bm in self._bm_data
+            if any(f["name"] == bm[0] and f["type"] == "discourse" for f in FORUMS)
+        ]
+        if not targets:
+            return
+        self._bm_refreshing    = True
+        self._bm_refresh_total = len(targets)
+        self._bm_refresh_done  = 0
+        self._set_status(f"Refreshing bookmarks… (0/{self._bm_refresh_total})")
+        threading.Thread(
+            target=self._bm_refresh_thread,
+            args=(list(targets),),
+            daemon=True,
+        ).start()
+
+    def _bm_refresh_thread(self, snapshot: list):
+        for bm in snapshot:
+            url        = bm[2]
+            forum_name = bm[0]
+            forum = next((f for f in FORUMS if f["name"] == forum_name), None)
+            la, solved = "", ""
+            if forum and forum["type"] == "discourse":
+                try:
+                    parts    = url.rstrip("/").split("/")
+                    topic_id = next((p for p in reversed(parts) if p.isdigit()), None)
+                    if topic_id:
+                        r    = _session.get(f"{forum['url']}/t/{topic_id}.json", timeout=9)
+                        data = r.json()
+                        la     = _fmt_date(data.get("last_posted_at", ""))
+                        solved = "✓" if data.get("has_accepted_answer", False) else ""
+                except Exception:
+                    pass
+            GLib.idle_add(self._on_bm_item_updated, url, la, solved)
+
+    def _on_bm_item_updated(self, url: str, last_activity: str, solved: str):
+        if last_activity:
+            for bm in self._bm_data:
+                if bm[2] == url:
+                    bm[6] = last_activity
+                    if solved:
+                        bm[5] = solved
+                    break
+        self._bm_refresh_done += 1
+        if self._bm_refresh_done >= self._bm_refresh_total:
+            self._bm_refreshing = False
+            self._bm_refresh()
+            self._write_bookmarks()
+            self._set_status(f"Bookmarks refreshed ({self._bm_refresh_total}).")
+        else:
+            self._set_status(
+                f"Refreshing bookmarks… ({self._bm_refresh_done}/{self._bm_refresh_total})"
+            )
 
     def _bm_selected_links(self) -> set:
         return {it.link for it in self._selected_items(self._bm_selection)}
@@ -1745,6 +1880,10 @@ class ScoutWindow(Gtk.ApplicationWindow):
         if ctrl and key == Gdk.KEY_z:
             self._bm_undo()
             return True
+        if ctrl and key == Gdk.KEY_r:
+            if self._notebook.get_current_page() == 1:
+                self._bm_refresh_activity()
+            return True
         if key == Gdk.KEY_F6:
             self._focus_active_table()
             return True
@@ -1766,7 +1905,7 @@ class ScoutWindow(Gtk.ApplicationWindow):
                 items = self._selected_items(self._res_selection)
                 if items:
                     bm_urls = self._bookmarked_urls()
-                    if all(it.link in bm_urls for it in items):
+                    if all(_disc_key(it.link) in bm_urls for it in items):
                         self._unbookmark_results_multi(items)
                     else:
                         self._bookmark_results_multi(items)
