@@ -469,6 +469,10 @@ class ScoutWindow(Gtk.ApplicationWindow):
         # on the focused row so keyboard navigation is usable on any theme.
         provider = Gtk.CssProvider()
         provider.load_from_data(b"""
+            columnview > listview > row {
+                padding-top: 2px;
+                padding-bottom: 2px;
+            }
             columnview > listview > row:focus {
                 outline: 2px solid alpha(currentColor, 0.55);
                 outline-offset: -2px;
@@ -725,20 +729,28 @@ class ScoutWindow(Gtk.ApplicationWindow):
             lbl.set_use_markup(True)
             li.set_child(lbl)
 
-        def on_bind(_f, li):
+        def render(li):
             item = li.get_item()
             text = item.date if item else ""
             parts = text.split(" ", 1)
             today = datetime.date.today().isoformat()
             if len(parts) == 2 and parts[0] == today:
                 escaped = GLib.markup_escape_text(parts[1])
-                markup = f'<span foreground="#fb8c00">{escaped}</span>'
+                markup = escaped if li.get_selected() else f'<span foreground="#fb8c00">{escaped}</span>'
             else:
                 markup = GLib.markup_escape_text(parts[0] if parts else text)
             li.get_child().set_markup(markup)
 
+        def on_bind(_f, li):
+            render(li)
+            li._sel_id = li.connect("notify::selected", lambda l, *_: render(l))
+
         def on_unbind(_f, li):
             li.get_child().set_markup("")
+            sel_id = getattr(li, "_sel_id", None)
+            if sel_id is not None:
+                li.disconnect(sel_id)
+                li._sel_id = None
 
         factory.connect("setup",  on_setup)
         factory.connect("bind",   on_bind)
@@ -775,7 +787,7 @@ class ScoutWindow(Gtk.ApplicationWindow):
         last_sorter    = Gtk.CustomSorter.new(self._cmp_last)
 
         self._col_res_n     = _column(S["col_n"],     _factory("marker", bind=True),   fixed_w=28)
-        self._col_res_forum = _column(S["col_forum"], _factory("forum", colored=True), fixed_w=150,
+        self._col_res_forum = _column(S["col_forum"], _factory("forum", colored=True), fixed_w=120,
                                       sorter=forum_sorter)
         _column(S["col_title"], _factory("title", bold=True), expand=True)
         self._col_res_created = _column(S["col_created"], _factory("date"),            fixed_w=89,
@@ -846,7 +858,7 @@ class ScoutWindow(Gtk.ApplicationWindow):
         self._col_bm_forum = Gtk.ColumnViewColumn(
             title=S["col_forum"],
             factory=self._make_label_factory("forum", colored=True, bold=True))
-        self._col_bm_forum.set_fixed_width(130)
+        self._col_bm_forum.set_fixed_width(120)
         self._col_bm_forum.set_sorter(forum_sorter)
         cv.append_column(self._col_bm_forum)
 
