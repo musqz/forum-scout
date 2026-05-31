@@ -782,19 +782,21 @@ class ScoutWindow(Gtk.ApplicationWindow):
             cv.append_column(col)
             return col
 
-        forum_sorter = Gtk.CustomSorter.new(self._cmp_forum)
+        forum_sorter   = Gtk.CustomSorter.new(self._cmp_forum)
+        title_sorter   = Gtk.CustomSorter.new(self._cmp_title)
         created_sorter = Gtk.CustomSorter.new(self._cmp_date)
         last_sorter    = Gtk.CustomSorter.new(self._cmp_last)
+        solved_sorter  = Gtk.CustomSorter.new(self._cmp_solved)
 
         self._col_res_n     = _column(S["col_n"],     _factory("marker", bind=True),   fixed_w=28)
         self._col_res_forum = _column(S["col_forum"], _factory("forum", colored=True), fixed_w=120,
                                       sorter=forum_sorter)
-        _column(S["col_title"], _factory("title", bold=True), expand=True)
+        _column(S["col_title"], _factory("title", bold=True), expand=True, sorter=title_sorter)
         self._col_res_created = _column(S["col_created"], _factory("date"),            fixed_w=89,
                                         sorter=created_sorter)
         self._col_res_last    = _column(S["col_last"],    _factory("last_activity"),   fixed_w=89,
                                         sorter=last_sorter)
-        _column("✓", self._make_solved_factory(), fixed_w=28)
+        _column("✓", self._make_solved_factory(), fixed_w=28, sorter=solved_sorter)
 
         # Sorting only applies when the data flows through a SortListModel driven
         # by the ColumnView's own (header-click) sorter.
@@ -852,8 +854,10 @@ class ScoutWindow(Gtk.ApplicationWindow):
         cv.connect("activate", self._on_bm_activate)
         self._bm_view = cv
 
-        forum_sorter = Gtk.CustomSorter.new(self._cmp_bm_forum)
-        date_sorter  = Gtk.CustomSorter.new(self._cmp_bm_date)
+        forum_sorter  = Gtk.CustomSorter.new(self._cmp_bm_forum)
+        title_sorter  = Gtk.CustomSorter.new(self._cmp_bm_title)
+        date_sorter   = Gtk.CustomSorter.new(self._cmp_bm_date)
+        solved_sorter = Gtk.CustomSorter.new(self._cmp_bm_solved)
 
         self._col_bm_forum = Gtk.ColumnViewColumn(
             title=S["col_forum"],
@@ -866,6 +870,7 @@ class ScoutWindow(Gtk.ApplicationWindow):
             title=S["col_title"],
             factory=self._make_label_factory("title", bold=True))
         title_col.set_expand(True)
+        title_col.set_sorter(title_sorter)
         cv.append_column(title_col)
 
         self._col_bm_date = Gtk.ColumnViewColumn(
@@ -885,6 +890,7 @@ class ScoutWindow(Gtk.ApplicationWindow):
 
         solved_col = Gtk.ColumnViewColumn(title="✓", factory=self._make_solved_factory())
         solved_col.set_fixed_width(28)
+        solved_col.set_sorter(solved_sorter)
         cv.append_column(solved_col)
 
         sort_model = Gtk.SortListModel(model=filtered, sorter=cv.get_sorter())
@@ -1138,6 +1144,22 @@ class ScoutWindow(Gtk.ApplicationWindow):
         da = "0000-00-00" if a.last_activity in ("—", "") else a.last_activity
         db = "0000-00-00" if b.last_activity in ("—", "") else b.last_activity
         return (da > db) - (da < db)
+
+    @staticmethod
+    def _cmp_title(a, b, _data):
+        return (a.title > b.title) - (a.title < b.title)
+
+    @staticmethod
+    def _cmp_bm_title(a, b, _data):
+        return (a.title > b.title) - (a.title < b.title)
+
+    @staticmethod
+    def _cmp_solved(a, b, _data):
+        return (a.solved > b.solved) - (a.solved < b.solved)
+
+    @staticmethod
+    def _cmp_bm_solved(a, b, _data):
+        return (a.solved > b.solved) - (a.solved < b.solved)
 
     # ── Result interactions ───────────────────────────────────────────────────
     def _on_result_activate(self, _cv, position):
