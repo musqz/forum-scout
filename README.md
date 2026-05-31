@@ -25,20 +25,6 @@ yay -S forum-scout
 
 ---
 
-## What changed from the GTK3 version
-
-- `GtkTreeView` / `GtkListStore` → `GtkColumnView` + `Gio.ListStore` + GObject models
-- `GtkStatusBar` → plain `Gtk.Label`
-- `GtkEntryCompletion` (deprecated) → `Gtk.Popover` + `Gtk.ListView` suggestion dropdown
-- `key-press-event` → `Gtk.EventControllerKey`
-- `button-press-event` → `Gtk.GestureClick` + `Gtk.PopoverMenu`
-- `Gtk.Menu` → `Gio.Menu` + `Gio.SimpleAction`
-- `Gtk.Clipboard.get()` → `Gdk.Display.get_default().get_clipboard()`
-- `Gtk.MessageDialog.run()` → `Gtk.AlertDialog` (async)
-- `resize()` / `get_size()` → `set_default_size()` / `get_width()` / `get_height()`
-- `delete-event` → `close-request`
-- `widget.show_all()` / `set_border_width()` / `pack_start()` → removed / margins / `append()`
-
 ## Window decorations
 
 The app follows the system theme and does not force client-side decorations:
