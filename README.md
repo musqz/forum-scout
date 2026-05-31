@@ -2,7 +2,7 @@
 
 Multi-forum search tool for Arch-based distros. Searches Mabox, EndeavourOS, Manjaro, CachyOS, Garuda, Arch Wiki, Manjaro Wiki, CachyOS Wiki, Arch BBS, KDE, GNOME and more simultaneously.
 
-Available on the AUR as `forum-scout`. Provides and conflicts with `forum-scout` — only one version (GTK4/Qt) can be installed at a time.
+Available on the AUR as `forum-scout`. Conflicts with `forum-scout-qt` — only one version (GTK4/Qt) can be installed at a time.
 
 <img width="966" height="675" alt="Image" src="https://github.com/user-attachments/assets/bb46132d-d71e-440f-bc83-1c70e1fb7b53" />
 
@@ -11,6 +11,19 @@ Available on the AUR as `forum-scout`. Provides and conflicts with `forum-scout`
 ```bash
 yay -S forum-scout
 ```
+
+## Features
+
+- **Multi-source search** — query Discourse forums, Arch Wiki and Arch BBS simultaneously
+- **Sortable results** — click any column header to sort; solved topics marked ✓
+- **Bookmarks** — save topics, filter, sort · right-click for context menu (Open, Copy link, Remove, Refresh reply) · multi-select delete · undo with `Ctrl+Z`
+- **Search history** — re-run any previous search · deduplicates entries, re-running updates the timestamp
+- **Locale dates** — date columns display in the system locale's format; sort order stays correct
+- **Keyboard shortcuts** — `Ctrl+L` focus search · `Enter` open · `Ctrl+B` bookmark · `Del` delete · `Ctrl+Z` undo · `Ctrl+R` refresh bookmarks
+- **Custom forums** — add, remove or reorder via `forums.conf`; supports Discourse, MediaWiki and DuckDuckGo types
+- **Shared config with Qt version** — bookmarks, history, settings and forums fully compatible
+
+---
 
 ## What changed from the GTK3 version
 
