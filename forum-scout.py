@@ -1603,16 +1603,37 @@ class ScoutWindow(Gtk.ApplicationWindow):
     # ── History ───────────────────────────────────────────────────────────────
     def _log_history(self, query: str):
         ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with open(HISTORY_FILE, "a") as f:
-            f.write(f"{ts} - {query}\n")
-        self._hist_store.insert(0, HistoryItem(ts, query))   # newest at top
-        self._completion_add(query)   # also offer it as a future suggestion
+        # Rewrite file removing any previous entry for the same query
+        existing = []
+        if os.path.exists(HISTORY_FILE):
+            with open(HISTORY_FILE) as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        _, q = line.split(" - ", 1)
+                        if q != query:
+                            existing.append(line)
+                    except Exception:
+                        existing.append(line)
+        existing.append(f"{ts} - {query}")
+        with open(HISTORY_FILE, "w") as f:
+            f.write("\n".join(existing) + "\n")
+        # Update in-memory store: remove old entry then insert at top
+        store = self._hist_store
+        for i in range(store.get_n_items()):
+            if store.get_item(i).query == query:
+                store.remove(i)
+                break
+        store.insert(0, HistoryItem(ts, query))
+        self._completion_add(query)
 
     def _load_history(self):
         self._hist_store.remove_all()
         if not os.path.exists(HISTORY_FILE):
             return
-        rows = []
+        seen: dict[str, str] = {}   # query → latest ts
         with open(HISTORY_FILE) as f:
             for line in f:
                 line = line.strip()
@@ -1620,11 +1641,11 @@ class ScoutWindow(Gtk.ApplicationWindow):
                     continue
                 try:
                     ts, query = line.split(" - ", 1)
-                    rows.append((ts, query))
+                    seen[query] = ts   # later lines overwrite, keeping newest
                 except Exception:
                     pass
-        # reverse so newest appears first
-        for ts, query in reversed(rows):
+        # sort by ts descending so newest appears first
+        for query, ts in sorted(seen.items(), key=lambda x: x[1], reverse=True):
             self._hist_store.append(HistoryItem(ts, query))
 
     def _hist_rerun(self, *_):
