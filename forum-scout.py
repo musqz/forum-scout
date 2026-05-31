@@ -123,7 +123,8 @@ _EN_STRINGS = {
     "col_date":    "Added",
     "col_created": "Created",
     "col_last":    "Last reply",
-    "bm_refresh":  "Refresh",
+    "bm_refresh":        "Refresh",
+    "ctx_bm_refresh":    "Refresh reply",
 }
 
 def _load_translation(lang: str) -> dict:
@@ -1228,8 +1229,10 @@ class ScoutWindow(Gtk.ApplicationWindow):
         self._bm_menu.set_has_arrow(False)
 
         for name, cb in [
-            ("bm-open",   self._act_bm_open),
-            ("bm-remove", self._act_bm_remove),
+            ("bm-open",    self._act_bm_open),
+            ("bm-copy",    self._act_bm_copy),
+            ("bm-remove",  self._act_bm_remove),
+            ("bm-refresh", self._act_bm_refresh),
         ]:
             action = Gio.SimpleAction.new(name, None)
             action.connect("activate", cb)
@@ -1276,14 +1279,18 @@ class ScoutWindow(Gtk.ApplicationWindow):
         items = self._selected_items(self._bm_selection)
         if not items:
             return
-        menu = Gio.Menu()
         n = len(items)
-        if n == 1:
-            menu.append(S["ctx_open"],      "win.bm-open")
-            menu.append(S["ctx_bm_remove"], "win.bm-remove")
-        else:
-            menu.append(f"Open {n} in browser",    "win.bm-open")
-            menu.append(f"Remove {n} bookmark(s)", "win.bm-remove")
+        label_open   = S["bm_open"] if n == 1 else f"{S['bm_open']} ({n})"
+        label_remove = S["bm_del"]  if n == 1 else f"{S['bm_del']} ({n})"
+        top = Gio.Menu()
+        top.append(label_open,   "win.bm-open")
+        top.append(S["bm_copy"], "win.bm-copy")
+        bottom = Gio.Menu()
+        bottom.append(label_remove,          "win.bm-remove")
+        bottom.append(S["ctx_bm_refresh"],   "win.bm-refresh")
+        menu = Gio.Menu()
+        menu.append_section(None, top)
+        menu.append_section(None, bottom)
         self._bm_menu.set_menu_model(menu)
         rect = Gdk.Rectangle()
         rect.x, rect.y, rect.width, rect.height = int(x), int(y), 1, 1
@@ -1310,6 +1317,12 @@ class ScoutWindow(Gtk.ApplicationWindow):
 
     def _act_bm_remove(self, *_):
         self._bm_remove()
+
+    def _act_bm_copy(self, *_):
+        self._bm_copy()
+
+    def _act_bm_refresh(self, *_):
+        self._bm_refresh_activity()
 
     def _open_results_multi(self, items):
         self._open_url_list([it.link for it in items if it.link])
