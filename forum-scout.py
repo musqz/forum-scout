@@ -216,6 +216,17 @@ def _locale_date(s: str) -> str:
         return s
 
 
+def _locale_datetime(s: str) -> str:
+    """Convert a stored YYYY-MM-DD HH:MM:SS string to locale date + time."""
+    if not s:
+        return s
+    try:
+        dt = datetime.datetime.fromisoformat(s)
+        return dt.strftime("%x %H:%M:%S")
+    except Exception:
+        return s
+
+
 class _ForumUnreachable(Exception):
     pass
 
@@ -949,7 +960,7 @@ class ScoutWindow(Gtk.ApplicationWindow):
         self._hist_view = cv
 
         self._col_hist_time = Gtk.ColumnViewColumn(
-            title=S["col_time"], factory=self._make_label_factory("time"))
+            title=S["col_time"], factory=self._make_label_factory("time", fmt=_locale_datetime))
         self._col_hist_time.set_fixed_width(160)
         cv.append_column(self._col_hist_time)
 
