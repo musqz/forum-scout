@@ -1,13 +1,11 @@
 # Maintainer: Eric Bakker <musqz at mf dot com>
-pkgname=forum-scout-gtk4
+pkgname=forum-scout
 pkgver=0.6.4
 pkgrel=2
 pkgdesc="Arch focused forum search tool (GTK4)"
 arch=('any')
 url="https://github.com/musqz/forum-scout"
 license=('MIT')
-provides=('forum-scout')
-conflicts=('forum-scout')
 depends=(
   'gtk4'
   'python-gobject'
