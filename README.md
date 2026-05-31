@@ -1,21 +1,11 @@
-# Forum Scout — GTK4 port
-
-GTK3 → GTK4 migration of [forum-scout](https://github.com/musqz/forum-scout).
+# Forum Scout
 
 Multi-forum search tool for Arch-based distros. Searches Mabox, EndeavourOS, Manjaro, CachyOS, Garuda, Arch Wiki, Manjaro Wiki, CachyOS Wiki, Arch BBS, KDE, GNOME and more simultaneously.
 
-## Status
-
-The GTK4 port is **complete**. All steps of the migration plan have been implemented, tested and cleaned up on **Openbox/X11 (Mabox)**.
-
-Testing on other desktops is welcome:
-- GNOME / Wayland — CSD behaviour untested
-- KDE Plasma — untested
-
-Available on the AUR as `forum-scout-gtk4`. Provides and conflicts with `forum-scout` — only one version (GTK3 / GTK4 / Qt) can be installed at a time.
+Available on the AUR as `forum-scout`. Provides and conflicts with `forum-scout` — only one version (GTK4/Qt) can be installed at a time.
 
 ```bash
-yay -S forum-scout-gtk4
+yay -S forum-scout
 ```
 
 ## What changed from the GTK3 version
@@ -64,7 +54,3 @@ gtk-application-prefer-dark-theme=true
 ```bash
 python forum-scout.py
 ```
-
-## Original GTK3 version
-
-[github.com/musqz/forum-scout](https://github.com/musqz/forum-scout)
