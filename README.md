@@ -4,6 +4,10 @@ Multi-forum search tool for Arch-based distros. Searches Mabox, EndeavourOS, Man
 
 Available on the AUR as `forum-scout`. Provides and conflicts with `forum-scout` — only one version (GTK4/Qt) can be installed at a time.
 
+<img width="966" height="675" alt="Image" src="https://github.com/user-attachments/assets/bb46132d-d71e-440f-bc83-1c70e1fb7b53" />
+
+<img width="966" height="675" alt="Image" src="https://github.com/user-attachments/assets/e51423b5-e25b-44f9-8c44-979254cb48a3" />
+
 ```bash
 yay -S forum-scout
 ```
