@@ -206,6 +206,16 @@ def _fmt_date(iso: str) -> str:
         return ""
 
 
+def _locale_date(s: str) -> str:
+    """Convert a stored YYYY-MM-DD[…] string to the system locale's short date."""
+    if s in ("—", ""):
+        return s
+    try:
+        return datetime.date.fromisoformat(s[:10]).strftime("%x")
+    except Exception:
+        return s
+
+
 class _ForumUnreachable(Exception):
     pass
 
@@ -637,7 +647,7 @@ class ScoutWindow(Gtk.ApplicationWindow):
 
     # ── ColumnView helpers ──────────────────────────────────────────────────────
     @staticmethod
-    def _make_label_factory(attr, colored=False, bold=False, bind=False):
+    def _make_label_factory(attr, colored=False, bold=False, bind=False, fmt=None):
         """Label-per-cell factory; reads `attr` off the row item, optionally
         coloring it with the item's `color` and/or bolding it. With bind=True,
         `attr` must be a GObject property and the cell tracks it live."""
@@ -652,7 +662,10 @@ class ScoutWindow(Gtk.ApplicationWindow):
             """Apply markup/text to the label, respecting selection state."""
             obj = list_item.get_item()
             lbl = list_item.get_child()
-            esc = GLib.markup_escape_text(getattr(obj, attr))
+            val = getattr(obj, attr)
+            if fmt is not None:
+                val = fmt(val)
+            esc = GLib.markup_escape_text(val)
             # when the row is selected, drop the forum color so the theme's
             # selection text color (white/light) shows through instead of
             # invisible same-color-on-same-color text
@@ -664,7 +677,7 @@ class ScoutWindow(Gtk.ApplicationWindow):
             elif bold:
                 lbl.set_markup(f'<span weight="600">{esc}</span>')
             else:
-                lbl.set_label(getattr(obj, attr))
+                lbl.set_label(val)
 
         def on_bind(_f, list_item):
             obj = list_item.get_item()
@@ -738,7 +751,7 @@ class ScoutWindow(Gtk.ApplicationWindow):
                 escaped = GLib.markup_escape_text(parts[1])
                 markup = escaped if li.get_selected() else f'<span foreground="#fb8c00">{escaped}</span>'
             else:
-                markup = GLib.markup_escape_text(parts[0] if parts else text)
+                markup = GLib.markup_escape_text(_locale_date(parts[0]) if parts else text)
             li.get_child().set_markup(markup)
 
         def on_bind(_f, li):
@@ -792,9 +805,9 @@ class ScoutWindow(Gtk.ApplicationWindow):
         self._col_res_forum = _column(S["col_forum"], _factory("forum", colored=True), fixed_w=120,
                                       sorter=forum_sorter)
         _column(S["col_title"], _factory("title", bold=True), expand=True, sorter=title_sorter)
-        self._col_res_created = _column(S["col_created"], _factory("date"),            fixed_w=89,
+        self._col_res_created = _column(S["col_created"], _factory("date",          fmt=_locale_date), fixed_w=89,
                                         sorter=created_sorter)
-        self._col_res_last    = _column(S["col_last"],    _factory("last_activity"),   fixed_w=89,
+        self._col_res_last    = _column(S["col_last"],    _factory("last_activity", fmt=_locale_date), fixed_w=89,
                                         sorter=last_sorter)
         _column("✓", self._make_solved_factory(), fixed_w=28, sorter=solved_sorter)
 
@@ -883,7 +896,7 @@ class ScoutWindow(Gtk.ApplicationWindow):
         last_sorter_bm = Gtk.CustomSorter.new(self._cmp_bm_last)
         self._col_bm_last = Gtk.ColumnViewColumn(
             title=S["col_last"],
-            factory=self._make_label_factory("last_activity"))
+            factory=self._make_label_factory("last_activity", fmt=_locale_date))
         self._col_bm_last.set_fixed_width(89)
         self._col_bm_last.set_sorter(last_sorter_bm)
         cv.append_column(self._col_bm_last)
