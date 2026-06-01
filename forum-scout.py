@@ -814,21 +814,22 @@ class ScoutWindow(Gtk.ApplicationWindow):
             cv.append_column(col)
             return col
 
+        marker_sorter  = Gtk.CustomSorter.new(self._cmp_marker)
         forum_sorter   = Gtk.CustomSorter.new(self._cmp_forum)
         title_sorter   = Gtk.CustomSorter.new(self._cmp_title)
         created_sorter = Gtk.CustomSorter.new(self._cmp_date)
         last_sorter    = Gtk.CustomSorter.new(self._cmp_last)
         solved_sorter  = Gtk.CustomSorter.new(self._cmp_solved)
 
-        self._col_res_n     = _column(S["col_n"],     _factory("marker", bind=True),   fixed_w=28)
-        self._col_res_forum = _column(S["col_forum"], _factory("forum", colored=True), fixed_w=120,
+        self._col_res_n     = _column(S["col_n"],     _factory("marker", bind=True), sorter=marker_sorter)
+        self._col_res_forum = _column(S["col_forum"], _factory("forum", colored=True),
                                       sorter=forum_sorter)
         _column(S["col_title"], _factory("title", bold=True), expand=True, sorter=title_sorter)
-        self._col_res_created = _column(S["col_created"], _factory("date",          fmt=_locale_date), fixed_w=89,
+        self._col_res_created = _column(S["col_created"], _factory("date",          fmt=_locale_date),
                                         sorter=created_sorter)
-        self._col_res_last    = _column(S["col_last"],    _factory("last_activity", fmt=_locale_date), fixed_w=89,
+        self._col_res_last    = _column(S["col_last"],    _factory("last_activity", fmt=_locale_date),
                                         sorter=last_sorter)
-        _column("✓", self._make_solved_factory(), fixed_w=28, sorter=solved_sorter)
+        _column("✓", self._make_solved_factory(), sorter=solved_sorter)
 
         # Sorting only applies when the data flows through a SortListModel driven
         # by the ColumnView's own (header-click) sorter.
@@ -894,7 +895,6 @@ class ScoutWindow(Gtk.ApplicationWindow):
         self._col_bm_forum = Gtk.ColumnViewColumn(
             title=S["col_forum"],
             factory=self._make_label_factory("forum", colored=True, bold=True))
-        self._col_bm_forum.set_fixed_width(120)
         self._col_bm_forum.set_sorter(forum_sorter)
         cv.append_column(self._col_bm_forum)
 
@@ -908,7 +908,6 @@ class ScoutWindow(Gtk.ApplicationWindow):
         self._col_bm_date = Gtk.ColumnViewColumn(
             title=S["col_date"],
             factory=self._make_bm_added_factory())
-        self._col_bm_date.set_fixed_width(89)
         self._col_bm_date.set_sorter(date_sorter)
         cv.append_column(self._col_bm_date)
 
@@ -916,12 +915,10 @@ class ScoutWindow(Gtk.ApplicationWindow):
         self._col_bm_last = Gtk.ColumnViewColumn(
             title=S["col_last"],
             factory=self._make_label_factory("last_activity", fmt=_locale_date))
-        self._col_bm_last.set_fixed_width(89)
         self._col_bm_last.set_sorter(last_sorter_bm)
         cv.append_column(self._col_bm_last)
 
         solved_col = Gtk.ColumnViewColumn(title="✓", factory=self._make_solved_factory())
-        solved_col.set_fixed_width(28)
         solved_col.set_sorter(solved_sorter)
         cv.append_column(solved_col)
 
@@ -959,22 +956,31 @@ class ScoutWindow(Gtk.ApplicationWindow):
         sw.set_vexpand(True)
 
         self._hist_store = Gio.ListStore(item_type=HistoryItem)
-        self._hist_selection = Gtk.SingleSelection(model=self._hist_store)
-        self._hist_selection.set_autoselect(False)
-        self._hist_selection.set_can_unselect(True)
 
-        cv = Gtk.ColumnView(model=self._hist_selection)
+        cv = Gtk.ColumnView()
         cv.connect("activate", self._on_hist_activate)
         self._hist_view = cv
 
+        time_sorter  = Gtk.CustomSorter.new(self._cmp_hist_time)
+        query_sorter = Gtk.CustomSorter.new(self._cmp_hist_query)
+
         self._col_hist_time = Gtk.ColumnViewColumn(
             title=S["col_time"], factory=self._make_label_factory("time", fmt=_locale_datetime, today_orange=True))
+        self._col_hist_time.set_sorter(time_sorter)
         cv.append_column(self._col_hist_time)
 
         query_col = Gtk.ColumnViewColumn(
             title=S["col_query"], factory=self._make_label_factory("query"))
         query_col.set_expand(True)
+        query_col.set_sorter(query_sorter)
         cv.append_column(query_col)
+
+        hist_sort = Gtk.SortListModel(model=self._hist_store, sorter=cv.get_sorter())
+        self._hist_selection = Gtk.SingleSelection(model=hist_sort)
+        self._hist_selection.set_autoselect(False)
+        self._hist_selection.set_can_unselect(True)
+        cv.set_model(self._hist_selection)
+        cv.sort_by_column(self._col_hist_time, Gtk.SortType.DESCENDING)
 
         sw.set_child(cv)
         vbox.append(sw)
@@ -1191,6 +1197,18 @@ class ScoutWindow(Gtk.ApplicationWindow):
     @staticmethod
     def _cmp_bm_solved(a, b, _data):
         return (a.solved > b.solved) - (a.solved < b.solved)
+
+    @staticmethod
+    def _cmp_marker(a, b, _data):
+        return (a.marker > b.marker) - (a.marker < b.marker)
+
+    @staticmethod
+    def _cmp_hist_time(a, b, _data):
+        return (a.time > b.time) - (a.time < b.time)
+
+    @staticmethod
+    def _cmp_hist_query(a, b, _data):
+        return (a.query > b.query) - (a.query < b.query)
 
     # ── Result interactions ───────────────────────────────────────────────────
     def _on_result_activate(self, _cv, position):
