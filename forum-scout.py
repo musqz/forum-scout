@@ -678,7 +678,7 @@ class ScoutWindow(Gtk.ApplicationWindow):
             if today_orange:
                 parts = raw.split(" ", 1)
                 if len(parts) == 2 and parts[0] == datetime.date.today().isoformat():
-                    esc = GLib.markup_escape_text(parts[1])
+                    esc = GLib.markup_escape_text(parts[1][:5])
                     lbl.set_markup(esc if list_item.get_selected() else f'<span foreground="#fb8c00">{esc}</span>')
                 else:
                     lbl.set_label(_locale_date(raw))
