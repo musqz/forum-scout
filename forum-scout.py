@@ -969,7 +969,6 @@ class ScoutWindow(Gtk.ApplicationWindow):
 
         self._col_hist_time = Gtk.ColumnViewColumn(
             title=S["col_time"], factory=self._make_label_factory("time", fmt=_locale_datetime, today_orange=True))
-        self._col_hist_time.set_fixed_width(160)
         cv.append_column(self._col_hist_time)
 
         query_col = Gtk.ColumnViewColumn(
