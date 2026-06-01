@@ -659,7 +659,7 @@ class ScoutWindow(Gtk.ApplicationWindow):
 
     # ── ColumnView helpers ──────────────────────────────────────────────────────
     @staticmethod
-    def _make_label_factory(attr, colored=False, bold=False, bind=False, fmt=None):
+    def _make_label_factory(attr, colored=False, bold=False, bind=False, fmt=None, today_orange=False):
         """Label-per-cell factory; reads `attr` off the row item, optionally
         coloring it with the item's `color` and/or bolding it. With bind=True,
         `attr` must be a GObject property and the cell tracks it live."""
@@ -674,9 +674,14 @@ class ScoutWindow(Gtk.ApplicationWindow):
             """Apply markup/text to the label, respecting selection state."""
             obj = list_item.get_item()
             lbl = list_item.get_child()
-            val = getattr(obj, attr)
-            if fmt is not None:
-                val = fmt(val)
+            raw = getattr(obj, attr)
+            if today_orange:
+                parts = raw.split(" ", 1)
+                if len(parts) == 2 and parts[0] == datetime.date.today().isoformat():
+                    esc = GLib.markup_escape_text(parts[1])
+                    lbl.set_markup(esc if list_item.get_selected() else f'<span foreground="#fb8c00">{esc}</span>')
+                    return
+            val = fmt(raw) if fmt is not None else raw
             esc = GLib.markup_escape_text(val)
             # when the row is selected, drop the forum color so the theme's
             # selection text color (white/light) shows through instead of
@@ -699,7 +704,7 @@ class ScoutWindow(Gtk.ApplicationWindow):
                     attr, lbl, "label", GObject.BindingFlags.SYNC_CREATE)
                 return
             render(list_item)
-            if colored:
+            if colored or today_orange:
                 # re-render when selection state changes so color is updated
                 list_item._sel_id = list_item.connect(
                     "notify::selected", lambda li, *_: render(li))
@@ -961,7 +966,7 @@ class ScoutWindow(Gtk.ApplicationWindow):
         self._hist_view = cv
 
         self._col_hist_time = Gtk.ColumnViewColumn(
-            title=S["col_time"], factory=self._make_label_factory("time", fmt=_locale_datetime))
+            title=S["col_time"], factory=self._make_label_factory("time", fmt=_locale_datetime, today_orange=True))
         self._col_hist_time.set_fixed_width(160)
         cv.append_column(self._col_hist_time)
 
