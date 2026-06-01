@@ -868,7 +868,7 @@ class ScoutWindow(Gtk.ApplicationWindow):
             tb.append(btn)
 
         self._bm_refresh_btn = Gtk.Button(label=S["bm_refresh"])
-        self._bm_refresh_btn.set_tooltip_text("Refresh last activity (Ctrl+R)")
+        self._bm_refresh_btn.set_tooltip_text("Refresh last reply's (Ctrl+R)")
         self._bm_refresh_btn.connect("clicked", self._bm_refresh_activity)
         tb.append(self._bm_refresh_btn)
 
