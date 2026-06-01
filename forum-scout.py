@@ -680,7 +680,9 @@ class ScoutWindow(Gtk.ApplicationWindow):
                 if len(parts) == 2 and parts[0] == datetime.date.today().isoformat():
                     esc = GLib.markup_escape_text(parts[1])
                     lbl.set_markup(esc if list_item.get_selected() else f'<span foreground="#fb8c00">{esc}</span>')
-                    return
+                else:
+                    lbl.set_label(_locale_date(raw))
+                return
             val = fmt(raw) if fmt is not None else raw
             esc = GLib.markup_escape_text(val)
             # when the row is selected, drop the forum color so the theme's
