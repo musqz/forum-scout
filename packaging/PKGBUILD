@@ -14,7 +14,7 @@ depends=(
 )
 checkdepends=('desktop-file-utils')
 source=("forum-scout-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('SKIP')
+sha256sums=('d18356ecfd220af1e286e4e090eb33a19624c22c47e052858650b4788bcc12c1')
 
 prepare() {
   cd "forum-scout-$pkgver"
