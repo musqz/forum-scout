@@ -4,3 +4,4 @@ packaging/pkg/
 packaging/*.tar.gz
 packaging/*.tar.zst
 packaging/*.sig
+CLAUDE.md
