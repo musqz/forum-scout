@@ -6,3 +6,8 @@ packaging/*.tar.zst
 packaging/*.sig
 CLAUDE.md
 claude.md
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
