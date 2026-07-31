@@ -5,3 +5,8 @@ packaging/*.tar.gz
 packaging/*.tar.zst
 packaging/*.sig
 CLAUDE.md
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
