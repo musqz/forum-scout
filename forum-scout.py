@@ -151,7 +151,7 @@ S = _load_translation(_lang)
 # ─── HTTP session ─────────────────────────────────────────────────────────────
 _session = requests.Session()
 _session.headers["User-Agent"] = (
-    f"forum-scout/{_VERSION} (https://github.com/musqz/forum-scout)"
+    f"forum-scout/{_VERSION} (https://codeberg.org/linux-bird/forum-scout)"
 )
 
 # ─── DuckDuckGo HTML parser ───────────────────────────────────────────────────
@@ -1016,7 +1016,7 @@ class ScoutWindow(Gtk.ApplicationWindow):
         sep.set_margin_top(4)
         sep.set_margin_bottom(4)
         box.append(sep)
-        box.append(_lbl(markup='<a href="https://github.com/musqz/forum-scout">github.com/musqz/forum-scout</a>'))
+        box.append(_lbl(markup='<a href="https://codeberg.org/linux-bird/forum-scout">codeberg.org/linux-bird/forum-scout</a>'))
         box.append(_lbl(markup="musqz · MIT"))
         return box
 
